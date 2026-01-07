@@ -1,0 +1,16 @@
+[tool.poetry]
+name = "chipanalysis"
+version = "0.1.0"
+description = ""
+authors = ["coco <corentin@bisot.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+moviepy = "^2.2.0"
+imageio-ffmpeg = "^0.6.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
