@@ -18,11 +18,9 @@ from statistics import median
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-# MoviePy v1/v2 compatible imports
-try:
-    from moviepy import ImageClip, concatenate_videoclips  # v2 style
-except Exception:
-    from moviepy.editor import ImageClip, concatenate_videoclips  # v1 style
+
+from moviepy import ImageClip, concatenate_videoclips  # v2 style
+
 
 
 # =========================
@@ -262,7 +260,70 @@ def draw_scale_bar(im_rgba: Image.Image, *,
                    fill=text_rgba)
 
 
-def make_frame_array(image_path: Path, ts: datetime, first_ts: datetime, cfg: Config) -> np.ndarray:
+def make_frame_array_from_image(img: Image.Image, ts: datetime, first_ts: datetime, cfg: Config) -> np.ndarray:
+    """
+    Like make_frame_array, but takes an already-loaded PIL Image.
+    - Preserves the same behavior for scaling, timestamp, and scale bar.
+    """
+    # Keep original width for units_per_pixel correction (same as your file-based version)
+    orig_w, _ = img.size
+
+    img = _resize_pil_to_width(img, cfg.resize_width)
+    W, H = img.size
+
+    def frac_px(frac: float, min_px: int = 1) -> int:
+        return max(min_px, int(round(frac * H)))
+
+    ts_font_px = frac_px(cfg.timestamp_font_h_frac, 8)
+    ts_margin_px = frac_px(cfg.timestamp_margin_h_frac, 2)
+    ts_boxpad_px = frac_px(cfg.timestamp_boxpad_h_frac, 2)
+
+    bar_height_px = frac_px(cfg.bar_height_h_frac, 2)
+    bar_font_px = frac_px(cfg.bar_font_h_frac, 8)
+    bar_margin_px = frac_px(cfg.bar_margin_h_frac, 2)
+    bar_boxpad_px = frac_px(cfg.bar_boxpad_h_frac, 2)
+
+    units_per_pixel_effective = cfg.units_per_pixel
+    if cfg.resize_width and orig_w != W and cfg.units_per_pixel > 0:
+        units_per_pixel_effective = cfg.units_per_pixel * (orig_w / W)
+
+    im_rgba = img.convert("RGBA")
+
+    if cfg.add_timestamp:
+        elapsed_hours = (ts - first_ts).total_seconds() / 3600.0
+        draw_timestamp(
+            im_rgba,
+            text=f"{elapsed_hours:.{cfg.hours_decimals}f} h",
+            position=cfg.timestamp_position,
+            font_px=ts_font_px,
+            font_path=cfg.timestamp_font_path,
+            margin_px=ts_margin_px,
+            boxpad_px=ts_boxpad_px,
+            box_alpha=cfg.box_alpha,
+            text_rgba=cfg.text_rgba,
+            stroke_width_px=cfg.stroke_width_px,
+            stroke_fill_rgba=cfg.stroke_fill_rgba,
+        )
+
+    if cfg.add_scale_bar:
+        draw_scale_bar(
+            im_rgba,
+            units_per_pixel_effective=units_per_pixel_effective,
+            bar_length_units=cfg.bar_length_units,
+            units_label=cfg.units_label,
+            position=cfg.bar_position,
+            margin_px=bar_margin_px,
+            bar_height_px=bar_height_px,
+            font_px=bar_font_px,
+            font_path=cfg.bar_font_path,
+            boxpad_px=bar_boxpad_px,
+            box_alpha=cfg.box_alpha,
+            text_rgba=cfg.text_rgba,
+            stroke_width_px=cfg.stroke_width_px,
+            stroke_fill_rgba=cfg.stroke_fill_rgba,
+        )
+
+    return np.array(im_rgba.convert("RGB"), dtype=np.uint8)
     img = Image.open(image_path)
     orig_w, _ = img.size
 
@@ -323,6 +384,9 @@ def make_frame_array(image_path: Path, ts: datetime, first_ts: datetime, cfg: Co
 
     return np.array(im_rgba.convert("RGB"), dtype=np.uint8)
 
+def make_frame_array(image_path: Path, ts: datetime, first_ts: datetime, cfg: Config) -> np.ndarray:
+    img = Image.open(image_path)
+    return make_frame_array_from_image(img, ts, first_ts, cfg)
 
 def main():
     print("=== Image → Time-proportional Video Builder ===")

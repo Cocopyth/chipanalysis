@@ -17,7 +17,8 @@ dependencies = [
   "matplotlib",
   "pandas",
   "seaborn",
-  "opencv-python"
+  "opencv-python",
+  "scikit-image"
 ]
 
 [build-system]
