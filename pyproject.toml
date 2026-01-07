@@ -1,16 +1,25 @@
-[tool.poetry]
+[project]
 name = "chipanalysis"
 version = "0.1.0"
 description = ""
-authors = ["coco <corentin@bisot.com>"]
 readme = "README.md"
-
-[tool.poetry.dependencies]
-python = "^3.11"
-moviepy = "^2.2.0"
-imageio-ffmpeg = "^0.6.0"
-
+requires-python = ">=3.10"
+authors = [
+  { name = "coco", email = "corentin@bisot.com" }
+]
+dependencies = [
+  "moviepy>=2.2.0,<3.0.0",
+  "imageio-ffmpeg>=0.6.0,<0.7.0",
+  "numpy>=1.23",
+  "notebook>=7.0.0",
+  "aicspylibczi",
+  "ipympl",
+  "matplotlib",
+  "pandas",
+  "seaborn",
+  "opencv-python"
+]
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
