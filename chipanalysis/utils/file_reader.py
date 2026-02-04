@@ -196,3 +196,53 @@ def get_timestamps_by_T(czi, S=0, C=0, Z=0):
         results.append((t, dt if dt is not None else ts))
 
     return results
+
+def get_frame(
+    czi,
+    time,
+    channel,
+    gamma=1.0,
+    roi=None,
+    scale_factor=1.0
+):
+    """
+    Load a frame from a CZI mosaic.
+    
+    Parameters
+    ----------
+    roi : dict or None
+        {"x0","y0","x1","y1"} in FULL-RES pixel coordinates
+    scale_factor : float
+        Same scale_factor used in read_mosaic()
+    """
+
+    mosaic = czi.read_mosaic(
+        C=channel,
+        T=time,
+        scale_factor=scale_factor
+    )
+
+    img = _squeeze_to_2d(mosaic).astype(np.float32)
+
+    # --- Apply ROI if provided ---
+    if roi is not None:
+        # Convert ROI from full-res to current scale
+        x0 = int(round(roi["x0"] * scale_factor))
+        x1 = int(round(roi["x1"] * scale_factor))
+        y0 = int(round(roi["y0"] * scale_factor))
+        y1 = int(round(roi["y1"] * scale_factor))
+
+        # Clamp to image bounds
+        h, w = img.shape
+        x0, x1 = np.clip([x0, x1], 0, w)
+        y0, y1 = np.clip([y0, y1], 0, h)
+
+        img = img[y0:y1, x0:x1]
+
+    # --- Display-only contrast ---
+    img_disp = stretch_contrast(img, 1, 99)
+
+    if gamma != 1.0:
+        img_disp = np.clip(img_disp, 0, 1) ** gamma
+
+    return img, img_disp

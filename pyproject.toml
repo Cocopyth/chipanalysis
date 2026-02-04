@@ -18,7 +18,8 @@ dependencies = [
   "pandas",
   "seaborn",
   "opencv-python",
-  "scikit-image"
+  "scikit-image",
+  "moviepy"
 ]
 
 [build-system]
