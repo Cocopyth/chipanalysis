@@ -203,7 +203,9 @@ def get_frame(
     channel,
     gamma=1.0,
     roi=None,
-    scale_factor=1.0
+    scale_factor=1.0,
+    stretch_min = 1,
+    stretch_max = 99
 ):
     """
     Load a frame from a CZI mosaic.
@@ -240,7 +242,7 @@ def get_frame(
         img = img[y0:y1, x0:x1]
 
     # --- Display-only contrast ---
-    img_disp = stretch_contrast(img, 1, 99)
+    img_disp = stretch_contrast(img, stretch_min, stretch_max)
 
     if gamma != 1.0:
         img_disp = np.clip(img_disp, 0, 1) ** gamma
