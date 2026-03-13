@@ -5,7 +5,7 @@ from statistics import median
 from moviepy import ImageClip, concatenate_videoclips
 from matplotlib import cm
 from datetime import datetime
-
+from PIL import Image
 mcherry = LinearSegmentedColormap.from_list(
     "mcherry",
     [
@@ -17,6 +17,16 @@ mcherry = LinearSegmentedColormap.from_list(
     ]
 )
 
+gfp = LinearSegmentedColormap.from_list(
+    "gfp",
+    [
+        (0.00, "#000000"),  # black
+        (0.25, "#001a00"),  # very dark green
+        (0.50, "#004d00"),  # dark green
+        (0.75, "#00a800"),  # strong green
+        (1.00, "#66ff33"),  # bright neon GFP green
+    ]
+)
 
 gray_cmap = cm.get_cmap("gray")
 

@@ -84,12 +84,13 @@ def get_frame(
     return img, img_disp
 
 
-def stretch_contrast(img, p_low=1, p_high=99):
+def stretch_contrast(img, p_low=1, p_high=99,lo=None,hi=None):
     """
     Contrast stretch using percentiles.
     Does NOT modify original image values.
     """
-    lo, hi = np.percentile(img, (p_low, p_high))
+    if lo is None or hi is None:
+        lo, hi = np.percentile(img, (p_low, p_high))
     img2 = np.clip(img, lo, hi)
     img2 = (img2 - lo) / (hi - lo + 1e-8)
     return img2
@@ -205,7 +206,9 @@ def get_frame(
     roi=None,
     scale_factor=1.0,
     stretch_min = 1,
-    stretch_max = 99
+    stretch_max = 99,
+    lo=None,
+    hi=None
 ):
     """
     Load a frame from a CZI mosaic.
@@ -242,7 +245,7 @@ def get_frame(
         img = img[y0:y1, x0:x1]
 
     # --- Display-only contrast ---
-    img_disp = stretch_contrast(img, stretch_min, stretch_max)
+    img_disp = stretch_contrast(img, stretch_min, stretch_max,lo,hi)
 
     if gamma != 1.0:
         img_disp = np.clip(img_disp, 0, 1) ** gamma
