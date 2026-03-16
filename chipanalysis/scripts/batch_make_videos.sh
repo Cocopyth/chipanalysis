@@ -19,9 +19,9 @@
 # Default SLURM resources (override on the sbatch command line)
 # --------------------------------------------------------------
 #SBATCH --job-name=make_videos
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task=1
 #SBATCH --mem=15844
-#SBATCH --time=4:00:00
+#SBATCH --time=12:00:00
 #SBATCH --output=logs/video%A_%a.out
 #SBATCH --error=logs/%x_%j.err
 
