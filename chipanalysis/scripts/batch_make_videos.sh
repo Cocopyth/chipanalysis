@@ -22,7 +22,6 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --time=12:00:00
-#SBATCH --partition=cpu
 #SBATCH --output=%x_%j.out
 #SBATCH --error=%x_%j.err
 
