@@ -15,6 +15,34 @@ from scipy import ndimage
 from scipy.signal import correlate, savgol_filter
 from scipy.ndimage import gaussian_filter1d
 from typing import Dict, Tuple, Optional
+from dataclasses import dataclass
+
+
+@dataclass
+class ChipGeometry:
+    """
+    Explicit chip geometry and channel parameters.
+    
+    All dimensions in µm unless otherwise noted.
+    """
+    # Main channel geometry
+    main_channel_width_um: float = 250.0
+    side_sub_channel_width_um: float = 355.0
+    
+    # PPA substrate thickness (defines chip height)
+    ppa_thickness_um: float = 1400.0
+    
+    # Periodicity detection parameters
+    min_period_um: float = 40.0
+    max_period_um: float = 100.0
+    band_height_px: int = 50  # Height of horizontal strips for scoring (pixels, not µm)
+    blur_sigma_bg: Tuple[int, int] = (5, 25)  # (y, x) for background subtraction
+    
+    # Design parameters for interface comb
+    min_width_um: float = 10.0
+    max_width_um: float = 50.0
+    gap_um: float = 65.0
+    total_length_um: float = 6000.0
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -109,12 +137,7 @@ def rotate_image_to_horizontal(img: np.ndarray, spatial_dir_deg: float) -> np.nd
 def find_middle_channel_position(
     img_rotated: np.ndarray,
     pixel_size_um: float,
-    main_channel_width_um: float = 250.0,
-    side_sub_channel_width_um: float = 355.0,
-    min_period_um: float = 40.0,
-    max_period_um: float = 100.0,
-    band_height_px: int = 50,
-    blur_sigma_bg: tuple = (5, 25),
+    geom: ChipGeometry = None,
 ) -> Tuple[float, float]:
     """
     Locate the middle zone (main channel + 2×side sub-channels) via periodicity scoring.
@@ -126,18 +149,8 @@ def find_middle_channel_position(
         Horizontally-rotated image
     pixel_size_um : float
         Physical pixel size (µm)
-    main_channel_width_um : float
-        Width of main channel (µm)
-    side_sub_channel_width_um : float
-        Width of each side sub-channel (µm)
-    min_period_um : float
-        Minimum period for autocorrelation search (µm)
-    max_period_um : float
-        Maximum period for autocorrelation search (µm)
-    band_height_px : int
-        Height of each horizontal strip in pixels (notebook uses 50)
-    blur_sigma_bg : tuple
-        Gaussian sigma (y, x) for background subtraction (notebook uses (5, 25))
+    geom : ChipGeometry, optional
+        Chip geometry parameters. Defaults to ChipGeometry().
         
     Returns
     -------
@@ -148,15 +161,18 @@ def find_middle_channel_position(
     """
     from scipy.signal import find_peaks
     
+    if geom is None:
+        geom = ChipGeometry()
+    
     # Geometry
-    middle_um = main_channel_width_um + 2 * side_sub_channel_width_um
+    middle_um = geom.main_channel_width_um + 2 * geom.side_sub_channel_width_um
     middle_px = middle_um / pixel_size_um
-    min_period_px = min_period_um / pixel_size_um
-    max_period_px = max_period_um / pixel_size_um
+    min_period_px = geom.min_period_um / pixel_size_um
+    max_period_px = geom.max_period_um / pixel_size_um
     
     # Background subtraction to remove slow illumination gradient
     img_float = img_rotated.astype(np.float64)
-    bg = ndimage.gaussian_filter(img_float, blur_sigma_bg)
+    bg = ndimage.gaussian_filter(img_float, geom.blur_sigma_bg)
     hp = img_float - bg
     
     # Periodicity score: autocorrelation peak prominence in target lag range
@@ -180,7 +196,7 @@ def find_middle_channel_position(
         return np.max(props["prominences"])
     
     # Compute periodicity scores for each horizontal band (on background-subtracted image)
-    half = band_height_px // 2
+    half = geom.band_height_px // 2
     ys = []
     pscore_list = []
     
@@ -212,8 +228,8 @@ def extract_band_region(
     img_rotated: np.ndarray,
     x_middle: float,
     middle_px: float,
-    side_sub_channel_width_um: float = 355.0,
-    pixel_size_um: float = 0.1625,
+    pixel_size_um: float,
+    geom: ChipGeometry = None,
 ) -> np.ndarray:
     """
     Extract the horizontal band containing main channel + side sub-channels.
@@ -226,17 +242,20 @@ def extract_band_region(
         Y-center of middle zone (pixels)
     middle_px : float
         Height of middle zone (pixels)
-    side_sub_channel_width_um : float
-        Width of each side sub-channel (µm)
     pixel_size_um : float
         Pixel size (µm)
+    geom : ChipGeometry, optional
+        Chip geometry. Defaults to ChipGeometry().
         
     Returns
     -------
     band : np.ndarray
         Extracted band (concatenated top + bottom side channels)
     """
-    side_px = side_sub_channel_width_um / pixel_size_um
+    if geom is None:
+        geom = ChipGeometry()
+    
+    side_px = geom.side_sub_channel_width_um / pixel_size_um
     
     # Top side channel
     y1_start = int(x_middle - middle_px / 2 - side_px / 10)
@@ -561,7 +580,7 @@ def find_first_match(
 def align_chip_to_image(
     img: np.ndarray,
     pixel_size_um: float,
-    design_params: Optional[Dict] = None,
+    geom: ChipGeometry = None,
     crop_um: float = 1800.0,
     debug: bool = False,
 ) -> Dict:
@@ -576,14 +595,8 @@ def align_chip_to_image(
         Input image (2D grayscale)
     pixel_size_um : float
         Physical pixel size (µm)
-    design_params : dict, optional
-        Design parameters. Default:
-        {
-            'min_width_um': 10.0,
-            'max_width_um': 50.0,
-            'gap_um': 65.0,
-            'total_length_um': 6000.0,
-        }
+    geom : ChipGeometry, optional
+        Chip geometry and design parameters. Defaults to ChipGeometry().
     crop_um : float
         Length of template crop from design right end (µm)
     debug : bool
@@ -599,13 +612,8 @@ def align_chip_to_image(
         - 'messages': list of status/error messages
         - 'figures': dict of matplotlib figures (if debug=True)
     """
-    if design_params is None:
-        design_params = {
-            'min_width_um': 10.0,
-            'max_width_um': 50.0,
-            'gap_um': 65.0,
-            'total_length_um': 6000.0,
-        }
+    if geom is None:
+        geom = ChipGeometry()
     
     figures = {}
     messages = []
@@ -639,14 +647,14 @@ def align_chip_to_image(
         
         # ─── Step 3: Locate middle channel ───────────────────────────────────
         messages.append("Step 3: Locating middle channel...")
-        x_middle, middle_px = find_middle_channel_position(img_rotated, pixel_size_um)
+        x_middle, middle_px = find_middle_channel_position(img_rotated, pixel_size_um, geom=geom)
         middle_um = (middle_px * pixel_size_um)
         messages.append(f"  → Middle zone: {x_middle*pixel_size_um:.0f} µm (height {middle_um:.0f} µm)")
         scores['middle_channel_found'] = 1.0
         
         # ─── Step 4: Extract band ───────────────────────────────────────────
         messages.append("Step 4: Extracting band region...")
-        band = extract_band_region(img_rotated, x_middle, middle_px, pixel_size_um=pixel_size_um)
+        band = extract_band_region(img_rotated, x_middle, middle_px, pixel_size_um, geom=geom)
         messages.append(f"  → Band shape: {band.shape}")
         scores['band_extraction_success'] = 1.0
         
@@ -678,7 +686,11 @@ def align_chip_to_image(
         # ─── Step 6: Build design comb ──────────────────────────────────────
         messages.append("Step 6: Building design comb...")
         pos_um, comb_full, interfaces_um, widths_um = build_ppa_interface_comb(
-            **design_params, sample_dx_um=pixel_size_um
+            min_width_um=geom.min_width_um,
+            max_width_um=geom.max_width_um,
+            gap_um=geom.gap_um,
+            total_length_um=geom.total_length_um,
+            sample_dx_um=pixel_size_um,
         )
         
         crop_px = int(crop_um / pixel_size_um)
@@ -740,9 +752,8 @@ def align_chip_to_image(
         # ─── Step 9: Compute bounding box ───────────────────────────────────
         messages.append("Step 9: Computing bounding box...")
         
-        strip_length_um = design_params['total_length_um']
-        rect1_width_um = 1400.0  # PPA1 thickness (from PPA_Chip_final.py)
-        rect1_width_px = rect1_width_um / pixel_size_um
+        strip_length_um = geom.total_length_um
+        rect1_width_px = geom.ppa_thickness_um / pixel_size_um
         
         chip_top_um = (x_middle - middle_px / 2 - rect1_width_px) * pixel_size_um
         chip_bottom_um = (x_middle + middle_px / 2 + rect1_width_px) * pixel_size_um
@@ -815,6 +826,7 @@ def align_chip_to_image(
         'is_flipped': is_flipped,
         'x_middle_px': float(x_middle) if x_middle is not None else None,
         'middle_px': float(middle_px) if middle_px is not None else None,
+        'main_px': float(geom.main_channel_width_um/pixel_size_um),
         'pixel_size_um': pixel_size_um,
         'scores': scores,
         'messages': messages,
@@ -829,6 +841,7 @@ def align_chip_to_image(
 def get_roi_from_result(
     result: Dict,
     img_rotated: np.ndarray,
+    region: str = "full",
     pad_left_um: float = 0.0,
     pad_right_um: float = 0.0,
     pad_top_um: float = 0.0,
@@ -837,8 +850,8 @@ def get_roi_from_result(
     """
     Crop a ROI from the rotated image using the alignment result.
 
-    The ROI is centered on the main channel (y) and bounded by the chip
-    left/right edges (x), with optional symmetric or asymmetric padding.
+    Can extract the full chip, main channel only, or one of the side
+    sub-channels, all with configurable padding.
 
     Parameters
     ----------
@@ -846,16 +859,20 @@ def get_roi_from_result(
         Output of ``align_chip_to_image``.
     img_rotated : np.ndarray
         Rotated image (apply ``result['rotate_fn']`` to the raw image first).
+    region : str
+        Which region to extract: 'full' (all channels), 'main' (main channel only),
+        'top' (top side sub-channel), or 'bottom' (bottom side sub-channel).
+        Default: 'full'.
     pad_left_um : float
-        Extra padding added to the left of the chip box (µm). Positive extends
-        outward; negative shrinks the ROI.
+        Extra padding on left edge of chip box (µm). Positive extends outward;
+        negative shrinks.
     pad_right_um : float
-        Extra padding added to the right of the chip box (µm).
+        Extra padding on right edge of chip box (µm).
     pad_top_um : float
-        Extra padding added above the main channel centre (µm).
+        Extra padding on the selected region's top (µm).
     pad_bottom_um : float
-        Extra padding added below the main channel centre (µm).
-        Defaults to ``pad_top_um`` when 0 (symmetric top/bottom).
+        Extra padding on the selected region's bottom (µm).
+        Defaults to ``pad_top_um`` when 0 (symmetric).
 
     Returns
     -------
@@ -865,25 +882,62 @@ def get_roi_from_result(
         Pixel and physical coordinates of the crop:
         ``x0_px, x1_px, y0_px, y1_px`` (pixels in rotated image) and
         ``left_um, right_um, top_um, bottom_um`` (µm).
+
+    Raises
+    ------
+    ValueError
+        If ``region`` is not one of 'full', 'main', 'top', 'bottom'.
     """
+    if region not in ('full', 'main', 'top', 'bottom'):
+        raise ValueError(
+            f"region must be one of 'full', 'main', 'top', 'bottom'; got {region!r}"
+        )
+
     box = result['bounding_box']
     pixel_size_um = result['pixel_size_um']
     x_middle_px = result['x_middle_px']
     middle_px   = result['middle_px']
+    is_flipped = result.get('is_flipped', True)
 
-    # If the chip was found in normal (non-flipped) orientation, rotate 180° so
-    # the output is always in a consistent left=small, right=large orientation.
+    # When flipped, top/bottom regions are swapped because the chip
+    # orientation is reversed. Swap them now so geometry is consistent.
+    if not is_flipped and region in ('top', 'bottom'):
+        region = 'bottom' if region == 'top' else 'top'
+    
+    # When not flipped, we apply 180° rotation at the end, so padding
+    # directions also rotate: top↔bottom, left↔right.
+    if not is_flipped:
+        pad_left_um, pad_right_um = pad_right_um, pad_left_um
+        pad_top_um, pad_bottom_um = pad_bottom_um, pad_top_um
 
-
-    # X extent: chip left/right + padding
+    # X extent: chip left/right + padding (always the same)
     left_um  = box['left_um']  - pad_left_um
     right_um = box['right_um'] + pad_right_um
 
-    # Y extent: centred on x_middle_px, padded symmetrically unless pad_bottom given
+    # Y extent: depends on region selection
+    half_main_px = result['main_px'] / 2.0
     if pad_bottom_um == 0.0:
         pad_bottom_um = pad_top_um
-    top_um    = x_middle_px * pixel_size_um - pad_top_um
-    bottom_um = x_middle_px * pixel_size_um + pad_bottom_um
+
+    if region == 'full':
+        # Entire middle zone (main + both side sub-channels)
+        top_um    = x_middle_px * pixel_size_um - pad_top_um
+        bottom_um = x_middle_px * pixel_size_um + pad_bottom_um
+
+    elif region == 'main':
+        # Main channel only (centre half_main_px on each side)
+        top_um    = (x_middle_px - half_main_px) * pixel_size_um - pad_top_um
+        bottom_um = (x_middle_px + half_main_px) * pixel_size_um + pad_bottom_um
+
+    elif region == 'top':
+        # Top side sub-channel (above main, height = half_main_px)
+        top_um    = (x_middle_px - middle_px / 2.0) * pixel_size_um - pad_top_um
+        bottom_um = (x_middle_px - half_main_px) * pixel_size_um + pad_bottom_um
+
+    elif region == 'bottom':
+        # Bottom side sub-channel (below main, height = half_main_px)
+        top_um    = (x_middle_px + half_main_px) * pixel_size_um - pad_top_um
+        bottom_um = (x_middle_px + middle_px / 2.0) * pixel_size_um + pad_bottom_um
 
     # Convert to pixel indices (clip to image bounds)
     H, W = img_rotated.shape[:2]
@@ -893,8 +947,11 @@ def get_roi_from_result(
     y1_px = int(np.clip(round(bottom_um / pixel_size_um), 0, H))
 
     roi = img_rotated[y0_px:y1_px, x0_px:x1_px]
-    if not result.get('is_flipped', True):
+
+    # Apply 180° rotation if needed (at the end, after region selection)
+    if not is_flipped:
         roi = np.rot90(roi, 2)
+
     roi_coords = {
         'x0_px': x0_px, 'x1_px': x1_px,
         'y0_px': y0_px, 'y1_px': y1_px,
