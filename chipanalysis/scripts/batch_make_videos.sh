@@ -26,7 +26,7 @@
 #SBATCH --error=logs/%x_%j.err
 
 
-set -euo pipefail
+set -uo pipefail  # Remove 'e' so failed background jobs don't kill the script
 
 # ---------------------------------------------------------------------------
 # Environment activation (edit as needed, or export before calling sbatch)
