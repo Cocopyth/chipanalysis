@@ -21,9 +21,9 @@
 #SBATCH --job-name=make_videos
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=15844
-#SBATCH --time=12:00:00
-#SBATCH --output=%x_%j.out
-#SBATCH --error=%x_%j.err
+#SBATCH --time=4:00:00
+#SBATCH --output=logs/video%A_%a.out
+#SBATCH --error=logs/%x_%j.err
 
 
 set -euo pipefail
@@ -47,8 +47,7 @@ fi
 # ---------------------------------------------------------------------------
 # Locate make_video_from_czi.py (same directory as this script)
 # ---------------------------------------------------------------------------
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PYTHON_SCRIPT="${SCRIPT_DIR}/make_video_from_czi.py"
+PYTHON_SCRIPT="/home/bisot/Documents/chipanalysis/chipanalysis/scripts/make_video_from_czi.py"
 
 if [[ ! -f "${PYTHON_SCRIPT}" ]]; then
     echo "ERROR: make_video_from_czi.py not found at '${PYTHON_SCRIPT}'" >&2
