@@ -32,8 +32,8 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Environment activation (edit as needed, or export before calling sbatch)
 # ---------------------------------------------------------------------------
-module load Python/3.12.8-GCCcore-12.2.0
-source /home/bisot/Documents/fungal_growth_model/.venv/bin/activate
+module load Python/3.12.3-GCCcore-12.2.0
+source /home/bisot/Documents/chipanalysis/.venv/bin/activate
 
 
 CZI_FOLDER="${1%/}"
