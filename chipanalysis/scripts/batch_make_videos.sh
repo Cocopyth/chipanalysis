@@ -32,7 +32,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Environment activation (edit as needed, or export before calling sbatch)
 # ---------------------------------------------------------------------------
-module load Python/3.12.3-GCCcore-12.2.0
+module load Python/3.12.3-GCCcore-13.3.0
 source /home/bisot/Documents/chipanalysis/.venv/bin/activate
 
 
