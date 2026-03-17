@@ -1,28 +1,27 @@
 #!/usr/bin/env bash
 # =============================================================================
-# batch_make_videos.sh  –  SLURM parallel worker (single job, N CPUs)
+# batch_region_fluorescence.sh  –  SLURM parallel worker (single job, N CPUs)
 # -----------------------------------------------------------------------------
-# Convert every .czi file in a folder to annotated MP4s.
+# Extract fluorescence metrics from every .czi file in a folder.
 # All files are processed in parallel using --cpus-per-task worker processes.
-# No need to count files or pass --array.
 #
 # Submission
 # ----------
-#   sbatch batch_make_videos.sh /path/to/folder
+#   sbatch batch_region_fluorescence.sh /path/to/folder
 #
 #   # Override CPUs (= max parallelism):
-#   sbatch --cpus-per-task=16 batch_make_videos.sh /path/to/folder
+#   sbatch --cpus-per-task=16 batch_region_fluorescence.sh /path/to/folder
 #
-#   # Forward extra options to make_video_from_czi.py:
-#   sbatch batch_make_videos.sh /path/to/folder --fps 15 --resize 2048
+#   # Forward extra options to analyze_region_fluorescence.py:
+#   sbatch batch_region_fluorescence.sh /path/to/folder --metric both --channels 0,1
 #
 # Default SLURM resources (override on the sbatch command line)
 # --------------------------------------------------------------
-#SBATCH --job-name=make_videos
-#SBATCH --mem=15844
-#SBATCH --time=12:00:00
-#SBATCH --output=logs/video%A_%a.out
-#SBATCH --error=logs/%x_%j.err
+#SBATCH --job-name=analyze_fluorescence
+#SBATCH --mem=32G
+#SBATCH --time=08:00:00
+#SBATCH --output=logs/fluorescence_%j.out
+#SBATCH --error=logs/fluorescence_%j.err
 
 
 set -uo pipefail  # Remove 'e' so failed background jobs don't kill the script
@@ -46,10 +45,10 @@ fi
 # ---------------------------------------------------------------------------
 # Locate make_video_from_czi.py (same directory as this script)
 # ---------------------------------------------------------------------------
-PYTHON_SCRIPT="/home/bisot/Documents/chipanalysis/chipanalysis/scripts/make_video_from_czi.py"
+PYTHON_SCRIPT="/home/bisot/Documents/chipanalysis/chipanalysis/scripts/analyze_region_fluorescence.py"
 
 if [[ ! -f "${PYTHON_SCRIPT}" ]]; then
-    echo "ERROR: make_video_from_czi.py not found at '${PYTHON_SCRIPT}'" >&2
+    echo "ERROR: analyze_region_fluorescence.py not found at '${PYTHON_SCRIPT}'" >&2
     exit 1
 fi
 
