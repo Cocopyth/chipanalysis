@@ -193,7 +193,7 @@ def main(args=None):
     channels = [0,1]
 
     # Determine output path
-    output_path: Path = opts.output or czi_path.parent / f"{czi_path.stem}_fluorescence.csv"
+    output_path: Path = opts.output / f"{czi_path.stem}_fluorescence.csv" if opts.output else czi_path.parent / f"{czi_path.stem}_fluorescence.csv"
 
     print(f"Loading CZI: {czi_path}")
     czi = CziFile(czi_path)
