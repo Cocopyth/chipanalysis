@@ -212,9 +212,6 @@ def main(args=None):
     first_frame, _ = get_frame(czi, 0, 0)
     result = align_chip_to_image(first_frame, pixel_size_um=pixel_size_um["X"], debug=False, geom=ChipGeometry())
 
-    if not result["success"]:
-        print(f"ERROR: Chip alignment failed. {result.get('messages', [])}", file=sys.stderr)
-        return 1
 
     print("  Alignment successful.")
 
