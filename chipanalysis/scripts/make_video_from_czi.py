@@ -30,6 +30,7 @@ Options
 
 import argparse
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from statistics import median
 
@@ -86,6 +87,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Channel index for magenta (mCherry)")
     p.add_argument("--ch-green", type=int, default=0,
                    help="Channel index for green (GFP)")
+    p.add_argument("--workers", type=int, default=1,
+                   help="Number of parallel worker threads for frame rendering "
+                        "(frames are independent; >1 enables concurrent I/O+processing)")
     return p
 
 
@@ -164,10 +168,11 @@ def main(args=None):
 
     video_durations = [clamp(float(d) / opts.scale, 0.0, 1e12) for d in real_deltas]
 
-    # ── 5. Build clips ────────────────────────────────────────────────────
-    print(f"Rendering {len(times)} frames …")
-    clips = []
-    for frame_i, ((time_i, _), dur) in enumerate(zip(times, video_durations)):
+    # ── 5. Build clips (parallel frame rendering) ────────────────────────
+    print(f"Rendering {len(times)} frames with {opts.workers} worker(s) …")
+    
+    def _render_frame(frame_i, time_i, dur):
+        """Render a single frame."""
         if frame_i % max(1, len(times) // 20) == 0:
             print(f"  frame {frame_i+1}/{len(times)}")
 
@@ -206,7 +211,24 @@ def main(args=None):
         # Release any figures created inside make_annotated to prevent leaking
         plt.close("all")
 
-        clips.append(ImageClip(frame_u8, duration=dur))
+        return (frame_i, ImageClip(frame_u8, duration=dur))
+    
+    clips_dict = {}
+    if opts.workers > 1:
+        with ThreadPoolExecutor(max_workers=opts.workers) as executor:
+            futures = {}
+            for frame_i, ((time_i, _), dur) in enumerate(zip(times, video_durations)):
+                futures[executor.submit(_render_frame, frame_i, time_i, dur)] = frame_i
+            for future in as_completed(futures):
+                frame_i, clip = future.result()
+                clips_dict[frame_i] = clip
+    else:
+        for frame_i, ((time_i, _), dur) in enumerate(zip(times, video_durations)):
+            frame_i_out, clip = _render_frame(frame_i, time_i, dur)
+            clips_dict[frame_i] = clip
+    
+    # Restore frame order
+    clips = [clips_dict[i] for i in range(len(times))]
 
     # ── 6. Write video ────────────────────────────────────────────────────
     print("Writing video …")

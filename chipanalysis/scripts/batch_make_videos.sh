@@ -65,20 +65,37 @@ if [[ ${N_FILES} -eq 0 ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Parallelism: up to $SLURM_CPUS_PER_TASK concurrent workers
+# Two-level parallelism:
+#   FILE_WORKERS  – how many CZI files run concurrently (bash level)
+#   FRAME_WORKERS – how many frame threads each Python process spawns
+#
+# Rule: FILE_WORKERS × FRAME_WORKERS ≤ N_WORKERS
+#   • Many files  → favour file-level concurrency, 1 thread per process
+#   • Few files   → each process gets more threads for frame parallelism
 # ---------------------------------------------------------------------------
 N_WORKERS="${SLURM_CPUS_PER_TASK:-$(nproc)}"
-echo "Processing ${N_FILES} file(s) with ${N_WORKERS} parallel worker(s)."
+
+if (( N_FILES >= N_WORKERS )); then
+    # More files than CPUs: saturate at the file level, 1 thread per process
+    FILE_WORKERS=$N_WORKERS
+    FRAME_WORKERS=1
+else
+    # Fewer files than CPUs: each process gets a share of the threads
+    FILE_WORKERS=$N_FILES
+    FRAME_WORKERS=$(( N_WORKERS / N_FILES ))
+fi
+
+echo "Processing ${N_FILES} file(s) — ${FILE_WORKERS} file(s) in parallel, ${FRAME_WORKERS} frame thread(s) each."
 
 job_count=0
 for CZI in "${ALL_FILES[@]}"; do
     echo "[$(date +%T)] Starting: ${CZI}"
     # shellcheck disable=SC2086
-    python "${PYTHON_SCRIPT}" "${CZI}" ${EXTRA_ARGS} &
+    python "${PYTHON_SCRIPT}" "${CZI}" --workers "${FRAME_WORKERS}" ${EXTRA_ARGS} &
 
     (( job_count++ ))
-    # Once we have N_WORKERS jobs running, wait for one to finish before launching more
-    if (( job_count >= N_WORKERS )); then
+    # Once FILE_WORKERS jobs are running, wait for one to finish before launching more
+    if (( job_count >= FILE_WORKERS )); then
         wait -n 2>/dev/null || wait   # 'wait -n' needs bash ≥ 4.3
         (( job_count-- ))
     fi
