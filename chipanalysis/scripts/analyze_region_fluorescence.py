@@ -30,36 +30,14 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from aicspylibczi import CziFile
-from skimage import exposure
-from skimage.feature import blob_doh
 
 from chipanalysis.utils.file_reader import get_pixel_sizes_um, get_timestamps_by_T, get_frame
 from chipanalysis.chip_alignment import align_chip_to_image, get_roi_from_result, ChipGeometry
-
-
-# ---------------------------------------------------------------------------
-# Metric functions
-# ---------------------------------------------------------------------------
-
-def profile_mean(img: np.ndarray, channel: int) -> float:
-    """Compute mean intensity."""
-    return float(np.mean(img))
-
-
-def count_cells(img: np.ndarray, channel: int) -> int:
-    """Count cells via blob detection."""
-    img = img.astype(float)
-    img = exposure.rescale_intensity(img, in_range='image', out_range=(0, 1))
-    img = (img - img.mean()) / (img.std() + 1e-8)
-
-    # Different sensitivity for different channels
-    if channel == 1:
-        blobs = blob_doh(img, min_sigma=5, max_sigma=20, num_sigma=10, threshold=0.2)
-    else:
-        blobs = blob_doh(img, min_sigma=3, max_sigma=5, num_sigma=10, threshold=0.05)
-    
-    return len(blobs)
-
+from chipanalysis.functions.region_fluorescence import (
+    profile_mean,
+    count_cells,
+    compute_profiles_over_time_roi,
+)
 
 # ---------------------------------------------------------------------------
 # ROI selectors
@@ -106,53 +84,6 @@ def make_roi_selectors(result, pad_left_um, pad_right_um, pad_top_um, pad_bottom
 
     return [select_roi_bottom, select_roi_top, select_roi_main]
 
-
-# ---------------------------------------------------------------------------
-# Profile computation
-# ---------------------------------------------------------------------------
-
-def compute_profiles_over_time_roi(
-    czi,
-    times,
-    channels,
-    roi_selectors,
-    roi_names,
-    metrics=None,
-):
-    """
-    Compute metrics for each ROI, channel, and timepoint.
-    
-    Returns
-    -------
-    pd.DataFrame
-        Columns: t, channel, roi_name, <metric1>, <metric2>, ...
-    """
-    if metrics is None:
-        metrics = {"mean": profile_mean}
-
-    frames = []
-
-    for t in times:
-        for channel in channels:
-            for roi_selector, roi_name in zip(roi_selectors, roi_names):
-                img, _ = get_frame(czi, t, channel, gamma=1)
-                roi_chosen = roi_selector(img)
-
-                row = {"t": t, "channel": channel, "roi_name": roi_name}
-
-                for metric_name, metric_fn in metrics.items():
-                    try:
-                        value = metric_fn(roi_chosen, channel)
-                        row[metric_name] = value
-                    except Exception as e:
-                        print(f"Warning: metric '{metric_name}' failed for t={t}, ch={channel}, roi={roi_name}: {e}")
-                        row[metric_name] = np.nan
-
-                frames.append(row)
-
-    return pd.DataFrame(frames)
-
-
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -177,6 +108,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Top region padding in µm")
     p.add_argument("--pad-bottom", type=float, default=1300.0,
                    help="Bottom region padding in µm")
+    p.add_argument("--workers", type=int, default=1,
+                   help="Number of parallel worker threads for timestep processing "
+                        "(each timestep is independent; >1 enables concurrent I/O+compute)")
     return p
 
 
@@ -230,7 +164,8 @@ def main(args=None):
 
     # Compute all timepoints
     times = list(range(dim_sizes["T"]))
-    print(f"Computing metrics for {len(times)} timepoint(s), {len(channels)} channel(s), {len(roi_names)} region(s)...")
+    print(f"Computing metrics for {len(times)} timepoint(s), {len(channels)} channel(s), "
+          f"{len(roi_names)} region(s) using {opts.workers} worker(s)...")
 
     datatable = compute_profiles_over_time_roi(
         czi,
@@ -239,6 +174,8 @@ def main(args=None):
         roi_selectors=roi_selectors,
         roi_names=roi_names,
         metrics=metrics,
+        px_um=pixel_size_um["X"],
+        n_workers=opts.workers,
     )
 
     # Save to CSV
