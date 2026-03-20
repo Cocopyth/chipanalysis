@@ -107,10 +107,10 @@ def main(args=None):
         sys.exit(1)
 
     output_path: Path = opts.output / f"{czi_path.stem}_video.mp4" if opts.output else czi_path.parent / f"{czi_path.stem}_video.mp4"
-    output.parent.mkdir(parents=True, exist_ok=True)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
     print(f"Input : {czi_path}")
-    print(f"Output: {output}")
+    print(f"Output: {output_path}")
 
     # ── 1. Open CZI and read metadata ──────────────────────────────────────
     czi = CziFile(czi_path)
@@ -234,7 +234,7 @@ def main(args=None):
     print("Writing video …")
     final = concatenate_videoclips(clips, method="compose")
     final.write_videofile(
-        str(output),
+        str(output_path),
         fps=opts.fps,
         codec="libx264",
         audio=False,
@@ -245,7 +245,7 @@ def main(args=None):
             "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
         ],
     )
-    print(f"✅ Done: {output}")
+    print(f"✅ Done: {output_path}")
 
 
 if __name__ == "__main__":
