@@ -157,7 +157,7 @@ def main(args=None):
         pad_top_um=opts.pad_top,
         pad_bottom_um=opts.pad_bottom,
     )
-    roi_names = ["roi_bac", "roi_dic", "roi_air"]
+    roi_names = ["roi_dic", "roi_bac", "roi_air"]
 
 
     metrics = {"mean": profile_mean, "cell_count": count_cells}

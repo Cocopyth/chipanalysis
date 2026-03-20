@@ -18,7 +18,7 @@
 # Default SLURM resources (override on the sbatch command line)
 # --------------------------------------------------------------
 #SBATCH --job-name=analyze_fluorescence
-#SBATCH --mem=32G
+#SBATCH --mem=190000
 #SBATCH --time=08:00:00
 #SBATCH --output=logs/fluorescence_%j.out
 #SBATCH --error=logs/fluorescence_%j.err

@@ -106,7 +106,7 @@ def main(args=None):
         print(f"ERROR: file not found: {czi_path}", file=sys.stderr)
         sys.exit(1)
 
-    output: Path = opts.output or czi_path.with_suffix(".mp4")
+    output_path: Path = opts.output / f"{czi_path.stem}_video.mp4" if opts.output else czi_path.parent / f"{czi_path.stem}_video.mp4"
     output.parent.mkdir(parents=True, exist_ok=True)
 
     print(f"Input : {czi_path}")
