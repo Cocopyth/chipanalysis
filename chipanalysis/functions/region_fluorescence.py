@@ -110,7 +110,7 @@ def compute_profiles_over_time_roi(
 
     if get_frame_fn is None:
         # Import here to avoid circular dependency
-        from chipanalysis.utils.maye_video_axio import get_frame
+        from chipanalysis.utils.file_reader import get_frame
         get_frame_fn = get_frame
 
     # Pre-build a lookup for roi ordering so sort is stable after parallel gather
