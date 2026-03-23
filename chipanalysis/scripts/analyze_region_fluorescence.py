@@ -143,7 +143,7 @@ def main(args=None):
 
     # Align chip on the first frame of the first channel
     print("Aligning chip to image...")
-    first_frame, _ = get_frame(czi, 0, 0)
+    first_frame, _ = get_frame(czi, 0, 2)
     result = align_chip_to_image(first_frame, pixel_size_um=pixel_size_um["X"], debug=False, geom=ChipGeometry())
 
 
