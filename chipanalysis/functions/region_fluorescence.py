@@ -13,7 +13,7 @@ def profile_mean(img, channel):
     return np.mean(img)
 
 
-def count_cells(img, channel, px_um=1.0, p_low=None, p_high=None, blob_threshold=0.05):
+def count_cells(img, channel, px_um=1.0, p_low=None, p_high=None):
     """
     Count cells/blobs in an image region using Laplacian of Gaussian.
 
@@ -55,9 +55,11 @@ def count_cells(img, channel, px_um=1.0, p_low=None, p_high=None, blob_threshold
     #
     # Strategy:
     #   • p_low / p_high are the 1st and 99.5th percentiles computed ONCE on
-    #     the full first frame of each channel (see analyze_region_fluorescence
-    #     or the debug notebook).  They represent a stable "background → bright
-    #     cell" intensity range for the entire experiment.
+    #     the chip ROI (the region encompassing all three sub-regions) from the
+    #     first frame of each channel (see analyze_region_fluorescence or the
+    #     debug notebook).  Using the chip ROI — rather than the full frame —
+    #     ensures the reference is representative of the actual measurement area
+    #     and is not skewed by off-chip background pixels.
     #   • rescale_intensity maps [p_low, p_high] → [0, 1].  Any value outside
     #     that range is clipped, not extrapolated.
     #   • If p_low/p_high are not supplied (e.g. standalone use), we fall back
@@ -75,9 +77,12 @@ def count_cells(img, channel, px_um=1.0, p_low=None, p_high=None, blob_threshold
     if channel == 1:
         # ~10 µm wide cells → radius ~5 µm
         cell_radius_um = 5.0
+        blob_threshold=0.05
     else:
         # ~1-2 µm wide cells → radius ~0.75 µm
         cell_radius_um = 1.5
+        blob_threshold=0.02
+
 
     # Convert physical radius to pixel sigma for LoG  (sigma = radius / sqrt(2))
     sigma_px = (cell_radius_um / px_um) / (2 ** 0.5)

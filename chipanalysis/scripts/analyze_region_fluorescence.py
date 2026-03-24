@@ -81,8 +81,18 @@ def make_roi_selectors(result, pad_left_um, pad_right_um, pad_top_um, pad_bottom
             pad_bottom_um=-20.0,
         )
         return roi
-
-    return [select_roi_bottom, select_roi_top, select_roi_main]
+    def select_roi_whole(img):
+        roi, _ = get_roi_from_result(
+            result,
+            result['rotate_fn'](img),
+            region="full",
+            pad_left_um=pad_left_um,
+            pad_right_um=pad_right_um,
+            pad_top_um=pad_top_um,
+            pad_bottom_um=pad_bottom_um,
+        )
+        return roi
+    return [select_roi_bottom, select_roi_top, select_roi_main, select_roi_whole]
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -146,32 +156,7 @@ def main(args=None):
     first_frame, _ = get_frame(czi, 0, 2)
     result = align_chip_to_image(first_frame, pixel_size_um=pixel_size_um["X"], debug=False, geom=ChipGeometry())
     print("  Alignment successful.")
-
-    # ── Per-channel intensity normalisation anchors ─────────────────────────
-    # blob_threshold in count_cells is an *absolute* LoG response value, so it
-    # is only meaningful if every image is brought onto the same intensity scale
-    # before the LoG is computed.
-    #
-    # We compute two percentile values (p_low = 1st, p_high = 99.5th) from the
-    # full first frame of each channel.  These act as a stable reference:
-    #   • p_low  ≈ background level for this channel/experiment
-    #   • p_high ≈ brightest real signal (cells) for this channel/experiment
-    #
-    # count_cells then maps [p_low, p_high] → [0, 1] for every ROI crop,
-    # regardless of how bright or dark that particular crop happens to be.
-    # This guarantees that the same blob_threshold value selects blobs of the
-    # same *relative* brightness across all ROIs and all timepoints.
-    # ─────────────────────────────────────────────────────────────────────────
-    print("Computing per-channel normalisation percentiles from first frame...")
-    norm_percentiles = {}
-    for ch in channels:
-        frame, _ = get_frame(czi, 0, ch)
-        p_low  = np.percentile(frame, 1)      # dark background reference
-        p_high = np.percentile(frame, 99.5)   # bright signal reference
-        norm_percentiles[ch] = (p_low, p_high)
-        print(f"  Ch {ch}: [{p_low:.1f}, {p_high:.1f}]")
-
-    # Create ROI selectors
+    
     roi_selectors = make_roi_selectors(
         result,
         pad_left_um=opts.pad_left,
@@ -179,6 +164,38 @@ def main(args=None):
         pad_top_um=opts.pad_top,
         pad_bottom_um=opts.pad_bottom,
     )
+
+    # ── Per-channel intensity normalisation anchors ─────────────────────────
+    # blob_threshold in count_cells is an *absolute* LoG response value, so it
+    # is only meaningful if every image is brought onto the same intensity scale
+    # before the LoG is computed.
+    #
+    # We compute two percentile values (p_low = 1st, p_high = 99.5th) from
+    # the *chip ROI* (roi_selectors[-1], which covers the full chip extent
+    # encompassing all three sub-regions) on the first frame of each channel.
+    # Using the chip ROI rather than the whole frame ensures that the
+    # background and bright-signal references are representative of the actual
+    # measurement area and are not skewed by the surrounding off-chip pixels.
+    #
+    #   • p_low  ≈ background level within the chip for this channel
+    #   • p_high ≈ brightest real signal (cells) within the chip
+    #
+    # count_cells then maps [p_low, p_high] → [0, 1] for every ROI crop,
+    # regardless of how bright or dark that particular crop happens to be.
+    # This guarantees that the same blob_threshold value selects blobs of the
+    # same *relative* brightness across all ROIs and all timepoints.
+    # ─────────────────────────────────────────────────────────────────────────
+    print("Computing per-channel normalisation percentiles from first frame (chip ROI)...")
+    norm_percentiles = {}
+    for ch in channels:
+        frame, _ = get_frame(czi, 0, ch)
+        frame = roi_selectors[-1](frame)  # crop to chip extent before computing percentiles
+        p_low  = np.percentile(frame, 1)      # dark background reference
+        p_high = np.percentile(frame, 99.5)   # bright signal reference
+        norm_percentiles[ch] = (p_low, p_high)
+        print(f"  Ch {ch}: [{p_low:.1f}, {p_high:.1f}]")
+
+
     roi_names = ["roi_dic", "roi_bac", "roi_air"]
 
 
