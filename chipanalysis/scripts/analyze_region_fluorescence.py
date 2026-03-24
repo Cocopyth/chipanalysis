@@ -124,7 +124,7 @@ def main(args=None):
         print(f"ERROR: CZI file not found: {czi_path}", file=sys.stderr)
         return 1
 
-    channels = [0,1]
+    channels = [int(c) for c in opts.channels.split(",")]
 
     # Determine output path
     output_path: Path = opts.output / f"{czi_path.stem}_fluorescence.csv" if opts.output else czi_path.parent / f"{czi_path.stem}_fluorescence.csv"
@@ -141,13 +141,35 @@ def main(args=None):
     print(f"  Dimensions: {dim_sizes}")
     print(f"  Pixel size: {pixel_size_um['X']:.4f} µm")
 
-    # Align chip on the first frame of the first channel
+    # Align chip on the first frame (channel 2)
     print("Aligning chip to image...")
     first_frame, _ = get_frame(czi, 0, 2)
     result = align_chip_to_image(first_frame, pixel_size_um=pixel_size_um["X"], debug=False, geom=ChipGeometry())
-
-
     print("  Alignment successful.")
+
+    # ── Per-channel intensity normalisation anchors ─────────────────────────
+    # blob_threshold in count_cells is an *absolute* LoG response value, so it
+    # is only meaningful if every image is brought onto the same intensity scale
+    # before the LoG is computed.
+    #
+    # We compute two percentile values (p_low = 1st, p_high = 99.5th) from the
+    # full first frame of each channel.  These act as a stable reference:
+    #   • p_low  ≈ background level for this channel/experiment
+    #   • p_high ≈ brightest real signal (cells) for this channel/experiment
+    #
+    # count_cells then maps [p_low, p_high] → [0, 1] for every ROI crop,
+    # regardless of how bright or dark that particular crop happens to be.
+    # This guarantees that the same blob_threshold value selects blobs of the
+    # same *relative* brightness across all ROIs and all timepoints.
+    # ─────────────────────────────────────────────────────────────────────────
+    print("Computing per-channel normalisation percentiles from first frame...")
+    norm_percentiles = {}
+    for ch in channels:
+        frame, _ = get_frame(czi, 0, ch)
+        p_low  = np.percentile(frame, 1)      # dark background reference
+        p_high = np.percentile(frame, 99.5)   # bright signal reference
+        norm_percentiles[ch] = (p_low, p_high)
+        print(f"  Ch {ch}: [{p_low:.1f}, {p_high:.1f}]")
 
     # Create ROI selectors
     roi_selectors = make_roi_selectors(
@@ -176,6 +198,7 @@ def main(args=None):
         metrics=metrics,
         px_um=pixel_size_um["X"],
         n_workers=opts.workers,
+        norm_percentiles=norm_percentiles,
     )
 
     # Save to CSV

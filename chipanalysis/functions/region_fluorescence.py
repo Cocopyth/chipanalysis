@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
 import pandas as pd
 from skimage import exposure
-from skimage.feature import blob_doh
+from skimage.feature import blob_log
 
 
 def profile_mean(img, channel):
@@ -13,9 +13,9 @@ def profile_mean(img, channel):
     return np.mean(img)
 
 
-def count_cells(img, channel, px_um=1.0):
+def count_cells(img, channel, px_um=1.0, p_low=None, p_high=None, blob_threshold=0.05):
     """
-    Count cells/blobs in an image region using Determinant of Hessian.
+    Count cells/blobs in an image region using Laplacian of Gaussian.
 
     Blob size parameters are derived from expected physical cell sizes:
         - channel 1: ~10 µm width (e.g. D. discoideum)
@@ -30,6 +30,16 @@ def count_cells(img, channel, px_um=1.0):
     px_um : float, optional
         Pixel size in µm. Used to convert cell size → sigma in pixels.
         Default is 1.0.
+    p_low : float, optional
+        Lower percentile value used to anchor intensity normalisation.
+        When provided together with p_high, the image is rescaled to [0, 1]
+        using these global bounds rather than the per-crop min/max, making
+        ``blob_threshold`` consistent across all crops and timepoints.
+    p_high : float, optional
+        Upper percentile value (see p_low).
+    blob_threshold : float, optional
+        Absolute LoG response threshold. Stable as long as normalisation
+        is consistent (i.e. p_low/p_high are supplied). Default is 0.05.
 
     Returns
     -------
@@ -37,26 +47,45 @@ def count_cells(img, channel, px_um=1.0):
         Number of detected blobs.
     """
     img = img.astype(float)
-    img = exposure.rescale_intensity(img, in_range='image', out_range=(0, 1))
-    img = (img - img.mean()) / (img.std() + 1e-8)
+
+    # ── Intensity normalisation ──────────────────────────────────────────────
+    # Goal: map pixel values to [0, 1] using a *fixed* reference scale so that
+    # blob_threshold (an absolute LoG response value) means the same thing for
+    # every crop, every ROI, and every timepoint.
+    #
+    # Strategy:
+    #   • p_low / p_high are the 1st and 99.5th percentiles computed ONCE on
+    #     the full first frame of each channel (see analyze_region_fluorescence
+    #     or the debug notebook).  They represent a stable "background → bright
+    #     cell" intensity range for the entire experiment.
+    #   • rescale_intensity maps [p_low, p_high] → [0, 1].  Any value outside
+    #     that range is clipped, not extrapolated.
+    #   • If p_low/p_high are not supplied (e.g. standalone use), we fall back
+    #     to per-crop min/max, which is less stable but still functional.
+    #
+    # Why NOT z-score?  Z-scoring uses the crop's own mean/std, so it changes
+    # with every sub-image and makes an absolute threshold unreliable.
+    # ─────────────────────────────────────────────────────────────────────────
+    in_range = (p_low, p_high) if (p_low is not None and p_high is not None) else 'image'
+    img = np.clip(
+        exposure.rescale_intensity(img, in_range=in_range, out_range=(0.0, 1.0)),
+        0.0, 1.0,
+    )
 
     if channel == 1:
-        # ~10 µm wide cells → radius ~5 µm → sigma = radius / sqrt(2)
+        # ~10 µm wide cells → radius ~5 µm
         cell_radius_um = 5.0
-        threshold = 0.2
     else:
         # ~1-2 µm wide cells → radius ~0.75 µm
         cell_radius_um = 1.5
-        threshold = 0.2
 
-    # Convert physical radius to pixel sigma
-    # For DoH, sigma ≈ radius / sqrt(2)
+    # Convert physical radius to pixel sigma for LoG  (sigma = radius / sqrt(2))
     sigma_px = (cell_radius_um / px_um) / (2 ** 0.5)
     min_sigma = max(1.0, sigma_px * 0.6)
     max_sigma = max(2.0, sigma_px * 1.4)
 
-    blobs = blob_doh(img, min_sigma=min_sigma, max_sigma=max_sigma,
-                     num_sigma=10, threshold=threshold)
+    blobs = blob_log(img, min_sigma=min_sigma, max_sigma=max_sigma,
+                     num_sigma=10, threshold=blob_threshold)
     return len(blobs)
 
 
@@ -70,6 +99,7 @@ def compute_profiles_over_time_roi(
     get_frame_fn=None,
     px_um=1.0,
     n_workers=1,
+    norm_percentiles=None,
 ):
     """
     Compute metrics over time for multiple ROIs and channels.
@@ -99,6 +129,12 @@ def compute_profiles_over_time_roi(
         Number of parallel worker threads for timestep processing.
         Each timestep (all channels and ROIs within it) is independent
         and can run concurrently. Default is 1 (sequential).
+    norm_percentiles : dict, optional
+        Mapping of channel → (p_low, p_high). When provided, functions
+        that accept ``p_low``/``p_high`` keyword arguments (e.g. count_cells)
+        receive the values for the current channel, anchoring intensity
+        normalisation so that absolute thresholds are consistent across
+        all crops and timepoints.
 
     Returns
     -------
@@ -127,11 +163,13 @@ def compute_profiles_over_time_roi(
                 row = {"t": t, "channel": channel, "roi_name": roi_name}
 
                 for name, fn in metrics.items():
-                    # Forward px_um to functions that support it (e.g. count_cells)
-                    if "px_um" in inspect.signature(fn).parameters:
-                        y = fn(roi_chosen, channel, px_um=px_um)
-                    else:
-                        y = fn(roi_chosen, channel)
+                    sig = inspect.signature(fn).parameters
+                    kwargs = {}
+                    if "px_um" in sig:
+                        kwargs["px_um"] = px_um
+                    if "p_low" in sig and norm_percentiles and channel in norm_percentiles:
+                        kwargs["p_low"], kwargs["p_high"] = norm_percentiles[channel]
+                    y = fn(roi_chosen, channel, **kwargs)
                     row[name] = y
 
                 rows.append(row)

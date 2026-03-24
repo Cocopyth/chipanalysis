@@ -898,14 +898,15 @@ def get_roi_from_result(
     x_middle_px = result['x_middle_px']
     middle_px   = result['middle_px']
     is_flipped = result.get('is_flipped', True)
-
+    if pad_bottom_um == 0.0:
+        pad_bottom_um = pad_top_um
     # When flipped, top/bottom regions are swapped because the chip
     # orientation is reversed. Swap them now so geometry is consistent.
     if not is_flipped and region in ('top', 'bottom'):
         region = 'bottom' if region == 'top' else 'top'
     
-    # When not flipped, we apply 180° rotation at the end, so padding
-    # directions also rotate: top↔bottom, left↔right.
+    # # When not flipped, we apply 180° rotation at the end, so padding
+    # # directions also rotate: top↔bottom, left↔right.
     if not is_flipped:
         pad_left_um, pad_right_um = pad_right_um, pad_left_um
         pad_top_um, pad_bottom_um = pad_bottom_um, pad_top_um
@@ -916,8 +917,7 @@ def get_roi_from_result(
 
     # Y extent: depends on region selection
     half_main_px = result['main_px'] / 2.0
-    if pad_bottom_um == 0.0:
-        pad_bottom_um = pad_top_um
+
 
     if region == 'full':
         # Entire middle zone (main + both side sub-channels)
