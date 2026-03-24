@@ -92,7 +92,7 @@ def make_roi_selectors(result, pad_left_um, pad_right_um, pad_top_um, pad_bottom
             pad_bottom_um=pad_bottom_um,
         )
         return roi
-    return [select_roi_bottom, select_roi_top, select_roi_main, select_roi_whole]
+    return [select_roi_top,select_roi_bottom, select_roi_main, select_roi_whole]
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -190,8 +190,8 @@ def main(args=None):
     for ch in channels:
         frame, _ = get_frame(czi, 0, ch)
         frame = roi_selectors[-1](frame)  # crop to chip extent before computing percentiles
-        p_low  = np.percentile(frame, 1)      # dark background reference
-        p_high = np.percentile(frame, 99.5)   # bright signal reference
+        p_low  = np.percentile(frame, 0)      # dark background reference
+        p_high = np.percentile(frame, 100)   # bright signal reference
         norm_percentiles[ch] = (p_low, p_high)
         print(f"  Ch {ch}: [{p_low:.1f}, {p_high:.1f}]")
 
