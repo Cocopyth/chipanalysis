@@ -217,7 +217,15 @@ def main(args=None):
         n_workers=opts.workers,
         norm_percentiles=norm_percentiles,
     )
+    times_tab = get_timestamps_by_T(czi, C=0, Z=0)
+    times_df = pd.DataFrame(times_tab, columns=["t", "timestr"])
+    datatable = datatable.merge(times_df, on="t", how="left")
 
+    datatable["datetime"] = pd.to_datetime(datatable["timestr"], utc=True)
+    t0 = datatable.loc[datatable["t"] == 0, "datetime"].iloc[0]
+
+    datatable["timedelta_from_0"] = datatable["datetime"] - t0
+    datatable["timedelta_hours"] = datatable["timedelta_from_0"].dt.total_seconds()/3600
     # Save to CSV
     datatable.to_csv(output_path, index=False)
     print(f"✓ Results saved: {output_path}")
