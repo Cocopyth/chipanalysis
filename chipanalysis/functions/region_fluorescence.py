@@ -77,7 +77,7 @@ def count_cells(img, channel, px_um=1.0, p_low=None, p_high=None):
     if channel == 1:
         # ~10 µm wide cells → radius ~5 µm
         cell_radius_um = 5.0
-        blob_threshold=0.05
+        blob_threshold=0.08
     else:
         # ~1-2 µm wide cells → radius ~0.75 µm
         cell_radius_um = 1.5
