@@ -54,7 +54,7 @@ def make_roi_selectors(result, pad_left_um, pad_right_um, pad_top_um, pad_bottom
             pad_left_um=pad_left_um,
             pad_right_um=pad_right_um,
             pad_top_um=pad_top_um,
-            pad_bottom_um=-10.0,
+            pad_bottom_um=-35.0,
         )
         return roi
 
@@ -65,7 +65,7 @@ def make_roi_selectors(result, pad_left_um, pad_right_um, pad_top_um, pad_bottom
             region="bottom",
             pad_left_um=pad_left_um,
             pad_right_um=pad_right_um,
-            pad_top_um=-10.0,
+            pad_top_um=-35.0,
             pad_bottom_um=pad_bottom_um,
         )
         return roi
@@ -77,8 +77,8 @@ def make_roi_selectors(result, pad_left_um, pad_right_um, pad_top_um, pad_bottom
             region="main",
             pad_left_um=pad_left_um,
             pad_right_um=pad_right_um,
-            pad_top_um=-20.0,
-            pad_bottom_um=-20.0,
+            pad_top_um=-35.0,
+            pad_bottom_um=-35.0,
         )
         return roi
     def select_roi_whole(img):
