@@ -208,7 +208,8 @@ def get_frame(
     stretch_min = 1,
     stretch_max = 99,
     lo=None,
-    hi=None
+    hi=None,
+    scene=None,
 ):
     """
     Load a frame from a CZI mosaic.
@@ -219,13 +220,15 @@ def get_frame(
         {"x0","y0","x1","y1"} in FULL-RES pixel coordinates
     scale_factor : float
         Same scale_factor used in read_mosaic()
+    scene : int or None
+        Scene index to read. If None, reads across all scenes (default behaviour).
     """
 
-    mosaic = czi.read_mosaic(
-        C=channel,
-        T=time,
-        scale_factor=scale_factor
-    )
+    kwargs = dict(C=channel, T=time, scale_factor=scale_factor)
+    if scene is not None:
+        bb = czi.get_all_scene_bounding_boxes()[scene]
+        kwargs["region"] = (bb.x, bb.y, bb.w, bb.h)
+    mosaic = czi.read_mosaic(**kwargs)
 
     img = _squeeze_to_2d(mosaic).astype(np.float32)
 

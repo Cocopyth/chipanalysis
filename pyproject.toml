@@ -19,7 +19,8 @@ dependencies = [
   "seaborn",
   "opencv-python",
   "scikit-image",
-  "moviepy"
+  "moviepy",
+  "scikit-learn"
 ]
 
 [build-system]
