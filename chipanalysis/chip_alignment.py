@@ -106,7 +106,12 @@ def find_image_orientation(img: np.ndarray, nbins: int = 180) -> Tuple[float, fl
     # Image striping direction is perpendicular to FFT peak
     spatial_dir_deg = (peak_theta_deg + 90) % 180
     
-    return peak_theta_deg, spatial_dir_deg
+    _fft_debug = {
+        "mag":           mag,
+        "ang_mean":      ang_mean,
+        "theta_centers": theta_centers,
+    }
+    return peak_theta_deg, spatial_dir_deg, _fft_debug
 
 
 def rotate_image_to_horizontal(img: np.ndarray, spatial_dir_deg: float) -> np.ndarray:
@@ -581,260 +586,131 @@ def align_chip_to_image(
     img: np.ndarray,
     pixel_size_um: float,
     geom: ChipGeometry = None,
-    crop_um: float = 1800.0,
+    crop_um: float = 1800.0,   # kept for API compatibility, unused
     debug: bool = False,
 ) -> Dict:
     """
-    Master function: align PPA chip design to measured image.
-    
-    Outputs bounding box and quality scores for each processing step.
-    
+    Determine chip rotation via FFT angular spectrum and return a rotate_fn.
+
+    Only the FFT-based orientation step is performed — no band finding,
+    no comb correlation.  The returned result dict is compatible with
+    get_roi_from_result (those keys are None when not computed).
+
     Parameters
     ----------
-    img : np.ndarray
-        Input image (2D grayscale)
+    img           : np.ndarray  2-D grayscale image
     pixel_size_um : float
-        Physical pixel size (µm)
-    geom : ChipGeometry, optional
-        Chip geometry and design parameters. Defaults to ChipGeometry().
-    crop_um : float
-        Length of template crop from design right end (µm)
-    debug : bool
-        If True, generate plots for each major step
-        
+    geom          : ChipGeometry (unused, kept for API compatibility)
+    crop_um       : float        (unused, kept for API compatibility)
+    debug         : bool         show FFT orientation + rotated image figures
+
     Returns
     -------
-    result : dict
-        Keys:
-        - 'bounding_box': {left, right, top, bottom} (µm)
-        - 'scores': quality metrics for each step
-        - 'success': bool, whether all steps succeeded
-        - 'messages': list of status/error messages
-        - 'figures': dict of matplotlib figures (if debug=True)
+    result : dict with keys
+        rotate_fn, rotate_angle_deg, success, messages, scores, pixel_size_um
+        (and 'figures' when debug=True)
+        bounding_box, x_middle_px, middle_px, main_px, is_flipped → None
     """
     if geom is None:
         geom = ChipGeometry()
-    
-    figures = {}
+
+    figures  = {}
     messages = []
-    scores = {}
-    
+    scores   = {}
+
     try:
-        # ─── Step 1: Find orientation ────────────────────────────────────────
-        messages.append("Step 1: Finding image orientation...")
-        peak_theta, spatial_dir = find_image_orientation(img)
-        messages.append(f"  → Spatial stripe direction: {spatial_dir:.1f}°")
-        scores['orientation_confidence'] = 0.9  # placeholder
-        
-        if debug:
-            fig, ax = plt.subplots(figsize=(8, 6))
-            ax.imshow(img, cmap='gray')
-            ax.set_title(f'Original image\nStripe direction: {spatial_dir:.1f}°')
-            figures['01_original'] = fig
-        
-        # ─── Step 2: Rotate to horizontal ────────────────────────────────────
-        # Notebook: ndimage.rotate(img, peak_theta_deg - 90)
-        # rotate_image_to_horizontal(img, peak_theta) does: rotate_angle = peak_theta - 90
-        messages.append("Step 2: Rotating image to horizontal...")
-        img_rotated = rotate_image_to_horizontal(img, peak_theta)
+        # ── FFT orientation ───────────────────────────────────────────────────
+        messages.append("Finding image orientation via FFT...")
+        peak_theta, spatial_dir, _fft_dbg = find_image_orientation(img)
+        messages.append(
+            f"  → FFT peak: {peak_theta:.1f}°  spatial direction: {spatial_dir:.1f}°"
+        )
+        scores['orientation_confidence'] = 0.9
+
+        # Wrap raw rotation (peak_theta − 90) into [−45°, +45°].
+        # The FFT spectrum has π-periodicity, so a peak at e.g. 170° means
+        # the same stripe as a peak at 0° — the ±90° fold resolves that.
+        rotate_angle = peak_theta - 90.0
+        if rotate_angle > 45.0:
+            rotate_angle -= 90.0
+        elif rotate_angle < -45.0:
+            rotate_angle += 90.0
+        messages.append(
+            f"  → Raw rotation: {peak_theta - 90.0:.1f}°  →  applied: {rotate_angle:.1f}°"
+        )
         scores['rotation_success'] = 1.0
-        
+        success = True
+
         if debug:
-            fig, ax = plt.subplots(figsize=(14, 6))
-            ax.imshow(img_rotated, cmap='gray')
-            ax.set_title('Rotated image (stripes horizontal)')
-            figures['02_rotated'] = fig
-        
-        # ─── Step 3: Locate middle channel ───────────────────────────────────
-        messages.append("Step 3: Locating middle channel...")
-        x_middle, middle_px = find_middle_channel_position(img_rotated, pixel_size_um, geom=geom)
-        middle_um = (middle_px * pixel_size_um)
-        messages.append(f"  → Middle zone: {x_middle*pixel_size_um:.0f} µm (height {middle_um:.0f} µm)")
-        scores['middle_channel_found'] = 1.0
-        
-        # ─── Step 4: Extract band ───────────────────────────────────────────
-        messages.append("Step 4: Extracting band region...")
-        band = extract_band_region(img_rotated, x_middle, middle_px, pixel_size_um, geom=geom)
-        messages.append(f"  → Band shape: {band.shape}")
-        scores['band_extraction_success'] = 1.0
-        
-        if debug:
-            fig, ax = plt.subplots(figsize=(14, 4))
-            ax.imshow(band, cmap='gray')
-            ax.set_title('Extracted band (top and bottom side channels)')
-            figures['03_band'] = fig
-        
-        # ─── Step 5: Extract 1D signal ──────────────────────────────────────
-        messages.append("Step 5: Extracting 1D signal...")
-        signal_1d = extract_1d_signal(band)
-        signal_peaks, d2_raw = compute_signal_peaks(signal_1d, pixel_size_um)
-        messages.append(f"  → Signal shape: {signal_peaks.shape}")
-        scores['signal_peaks_found'] = float(np.sum(signal_peaks > 0.1) > 10)
-        
-        if debug:
-            fig, ax = plt.subplots(figsize=(14, 4))
-            x_um = np.arange(len(signal_peaks)) * pixel_size_um
-            ax.plot(x_um, signal_peaks, label='d²I/dx² (normalized)', color='black', lw=1)
-            ax.fill_between(x_um, signal_peaks, alpha=0.3)
-            ax.set_xlabel('Position (µm)')
-            ax.set_ylabel('d²I/dx² (norm.)')
-            ax.set_title('Detected dark minima (signal peaks)')
-            ax.legend()
-            ax.grid(True, alpha=0.3)
-            figures['04_signal_peaks'] = fig
-        
-        # ─── Step 6: Build design comb ──────────────────────────────────────
-        messages.append("Step 6: Building design comb...")
-        pos_um, comb_full, interfaces_um, widths_um = build_ppa_interface_comb(
-            min_width_um=geom.min_width_um,
-            max_width_um=geom.max_width_um,
-            gap_um=geom.gap_um,
-            total_length_um=geom.total_length_um,
-            sample_dx_um=pixel_size_um,
-        )
-        
-        crop_px = int(crop_um / pixel_size_um)
-        n_comb_full = len(comb_full)
-        template_offset = n_comb_full - crop_px
-        comb_design = comb_full[-crop_px:]
-        interfaces_design_px = np.array(interfaces_um) / pixel_size_um
-        
-        messages.append(f"  → Design: {len(widths_um)} channels, {len(interfaces_um)} interfaces")
-        messages.append(f"  → Template cropped to last {crop_um:.0f} µm ({len(comb_design)} px)")
-        scores['design_comb_built'] = 1.0
-        
-        # ─── Step 7: Cross-correlate ────────────────────────────────────────
-        messages.append("Step 7: Cross-correlating comb with signal...")
-        corr_result = correlate_comb_to_signal(
-            signal_peaks, comb_design, interfaces_design_px, template_offset
-        )
-        
-        messages.append(f"  → {corr_result['orientation']}")
-        messages.append(f"  → Normal score: {corr_result['score_normal']:.1f}")
-        messages.append(f"  → Flipped score: {corr_result['score_flipped']:.1f}")
-        messages.append(f"  → Valid interfaces: {corr_result['valid_count']}/{corr_result['total_count']}")
-        
-        # Correlation quality score
-        best_score = max(corr_result['score_normal'], corr_result['score_flipped'])
-        max_possible = np.sum(signal_peaks > 0.1) * np.sum(comb_design > 0.1)
-        scores['correlation_quality'] = float(best_score / max(max_possible, 1))
-        
-        if debug:
-            fig, ax = plt.subplots(figsize=(14, 4))
-            x_um = np.arange(len(signal_peaks)) * pixel_size_um
-            ax.plot(x_um, signal_peaks, label='Signal peaks', color='black', lw=0.8)
-            ax.plot(x_um, corr_result['aligned_comb'], label=f"Aligned comb [{corr_result['orientation']}]",
-                   color='red', lw=1.2, alpha=0.8)
-            ax.set_xlabel('Position (µm)')
-            ax.set_ylabel('Normalized amplitude')
-            ax.set_title('Signal vs Aligned Design Comb')
-            ax.legend()
-            ax.grid(True, alpha=0.3)
-            figures['05_alignment'] = fig
-        
-        # ─── Step 8: Find first match ───────────────────────────────────────
-        messages.append("Step 8: Finding chip edge...")
-        first_match_um = find_first_match(
-            corr_result['aligned_px'],
-            corr_result['aligned_comb'],
-            signal_peaks,
-            corr_result['is_flipped'],
-            pixel_size_um,
-        )
-        
-        if first_match_um is not None:
-            messages.append(f"  → Edge found at {first_match_um:.0f} µm")
-            scores['edge_found'] = 1.0
-        else:
-            messages.append("  → WARNING: No edge found!")
-            scores['edge_found'] = 0.0
-        
-        # ─── Step 9: Compute bounding box ───────────────────────────────────
-        messages.append("Step 9: Computing bounding box...")
-        
-        strip_length_um = geom.total_length_um
-        rect1_width_px = geom.ppa_thickness_um / pixel_size_um
-        
-        chip_top_um = (x_middle - middle_px / 2 - rect1_width_px) * pixel_size_um
-        chip_bottom_um = (x_middle + middle_px / 2 + rect1_width_px) * pixel_size_um
-        
-        if corr_result['is_flipped']:
-            chip_left_um = first_match_um
-            chip_right_um = first_match_um + strip_length_um
-        else:
-            chip_right_um = first_match_um
-            chip_left_um = chip_right_um - strip_length_um
-        
-        bounding_box = {
-            'left_um': float(chip_left_um),
-            'right_um': float(chip_right_um),
-            'top_um': float(chip_top_um),
-            'bottom_um': float(chip_bottom_um),
-            'width_um': float(chip_right_um - chip_left_um),
-            'height_um': float(chip_bottom_um - chip_top_um),
-        }
-        
-        messages.append(f"  → Box: [{bounding_box['left_um']:.0f}, {bounding_box['right_um']:.0f}] × "
-                       f"[{bounding_box['top_um']:.0f}, {bounding_box['bottom_um']:.0f}] µm")
-        scores['bounding_box_computed'] = 1.0
-        
-        if debug:
-            fig, ax = plt.subplots(figsize=(14, 8))
-            H_img, W_img = img_rotated.shape
-            ax.imshow(img_rotated, cmap='gray', aspect='auto',
-                     extent=[0, W_img * pixel_size_um, H_img * pixel_size_um, 0])
-            
-            from matplotlib.patches import Rectangle
-            ax.add_patch(Rectangle(
-                (bounding_box['left_um'], bounding_box['top_um']),
-                bounding_box['width_um'], bounding_box['height_um'],
-                linewidth=2.5, edgecolor='limegreen', facecolor='none', zorder=5
-            ))
-            ax.set_title('Chip bounding box on full image')
-            ax.set_xlabel('Position (µm)')
-            ax.set_ylabel('Position (µm)')
-            ax.grid(True, alpha=0.2)
-            figures['06_bounding_box'] = fig
-        
-        # Overall success
-        success = (first_match_um is not None and 
-                  scores['correlation_quality'] > 0.1 and
-                  scores['signal_peaks_found'] > 0.5)
-        is_flipped = corr_result['is_flipped']
-        
+            _theta_deg = np.degrees(_fft_dbg["theta_centers"])
+
+            fig, axes = plt.subplots(1, 3, figsize=(20, 5))
+
+            axes[0].imshow(img, cmap="gray")
+            axes[0].set_title(
+                f"Original image\n"
+                f"stripe dir: {spatial_dir:.1f}°  →  rotation to apply: {rotate_angle:.1f}°"
+            )
+            axes[0].axis("off")
+
+            axes[1].imshow(_fft_dbg["mag"], cmap="inferno", origin="upper")
+            axes[1].set_title("FFT log-magnitude spectrum")
+            axes[1].axis("off")
+
+            axes[2].plot(_theta_deg, _fft_dbg["ang_mean"], color="steelblue", lw=1.5)
+            axes[2].axvline(
+                peak_theta, color="red", lw=1.5, ls="-",
+                label=f"FFT peak  {peak_theta:.1f}°  (raw rot {peak_theta - 90:.1f}°)",
+            )
+            axes[2].axvline(
+                rotate_angle + 90.0, color="orange", lw=1.5, ls="--",
+                label=f"Effective peak  →  rotation {rotate_angle:.1f}°",
+            )
+            axes[2].set_xlabel("Angle (degrees)")
+            axes[2].set_ylabel("Mean FFT magnitude")
+            axes[2].set_title("Angular power spectrum")
+            axes[2].legend(fontsize=9)
+            axes[2].grid(True, alpha=0.3)
+            plt.suptitle(
+                f"FFT orientation  (raw {peak_theta - 90:.1f}° → wrapped {rotate_angle:.1f}°)",
+                fontsize=10,
+            )
+            plt.tight_layout()
+            figures['00_fft_orientation'] = fig
+
+            img_rotated_dbg = ndimage.rotate(img, rotate_angle, reshape=False)
+            fig2, ax2 = plt.subplots(figsize=(14, 6))
+            ax2.imshow(img_rotated_dbg, cmap='gray')
+            ax2.set_title(f'Rotated image  (angle = {rotate_angle:.1f}°)')
+            figures['02_rotated'] = fig2
+
     except Exception as e:
         messages.append(f"ERROR: {str(e)}")
-        bounding_box = None
+        rotate_angle = 0.0
         success = False
-        peak_theta = 0.0
-        x_middle = None
-        middle_px = None
-        is_flipped = False
-    
-    # Rotation angle used (peak_theta - 90), capture it for re-use
-    rotate_angle = peak_theta - 90
 
     def rotate_fn(other_img: np.ndarray) -> np.ndarray:
-        """Apply the same rotation found during alignment to another image."""
+        """Apply the rotation found during FFT alignment to another image."""
         return ndimage.rotate(other_img, rotate_angle, reshape=False)
 
     result = {
-        'success': success,
-        'bounding_box': bounding_box,
+        'success':          success,
         'rotate_angle_deg': rotate_angle,
-        'rotate_fn': rotate_fn,
-        'is_flipped': is_flipped,
-        'x_middle_px': float(x_middle) if x_middle is not None else None,
-        'middle_px': float(middle_px) if middle_px is not None else None,
-        'main_px': float(geom.main_channel_width_um/pixel_size_um),
-        'pixel_size_um': pixel_size_um,
-        'scores': scores,
-        'messages': messages,
+        'rotate_fn':        rotate_fn,
+        'pixel_size_um':    pixel_size_um,
+        'scores':           scores,
+        'messages':         messages,
+        # Fields expected by get_roi_from_result — not computed in FFT-only mode
+        'bounding_box':     None,
+        'x_middle_px':      None,
+        'middle_px':        None,
+        'main_px':          None,
+        'is_flipped':       None,
     }
-    
+
     if debug:
         result['figures'] = figures
-    
+
     return result
 
 
