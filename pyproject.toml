@@ -8,20 +8,31 @@ authors = [
   { name = "coco", email = "corentin@bisot.com" }
 ]
 dependencies = [
+  # ── Notebook / display ────────────────────────────────────────────────────
+  "notebook>=7.0.0",
+  "ipympl",
+  # ── Core numerics ─────────────────────────────────────────────────────────
+  "numpy>=1.23",
+  "pandas",
+  "scipy",
+  # ── Image processing ──────────────────────────────────────────────────────
+  "scikit-image",
+  "opencv-python",
+  "Pillow",                         # PIL — used in video rendering
+  # ── Plotting ──────────────────────────────────────────────────────────────
+  "matplotlib",
+  "seaborn",
+  # ── Deep learning ─────────────────────────────────────────────────────────
+  "torch>=2.0",                     # UNet pillar / organism detectors
+  # ── Video export ──────────────────────────────────────────────────────────
   "moviepy>=2.2.0,<3.0.0",
   "imageio-ffmpeg>=0.6.0,<0.7.0",
-  "numpy>=1.23",
-  "notebook>=7.0.0",
+  # ── CZI file reading ──────────────────────────────────────────────────────
   "aicspylibczi",
-  "ipympl",
-  "matplotlib",
-  "pandas",
-  "seaborn",
-  "opencv-python",
-  "scikit-image",
-  "moviepy",
+  # ── Batch / config ────────────────────────────────────────────────────────
+  "PyYAML",                         # yaml config in batch_chip_dynamics.py
+  "openpyxl",                       # Excel manifest reading
   "scikit-learn",
-  "openpyxl"
 ]
 
 [build-system]
