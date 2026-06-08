@@ -7,7 +7,7 @@
 
 # ── Pillar detection (shared by all organisms) ────────────────────────────────
 pillar:
-  model_path:    models/unet_pillar_newchip.pth
+  model_path:    ../models/unet_pillar_newchip.pth
   threshold:     0.5
   patch_size:    256
   patch_stride:  128
@@ -23,14 +23,14 @@ organisms:
 
   physarum:
     detector:       unet
-    model_path:     models/unet_ppolycephalum_best_newchip.pth
+    model_path:     ../models/unet_ppolycephalum_best_newchip.pth
     channel_key:    channel_bf
     unet_threshold: 0.5
     min_obj_um2:    100.0
 
   celegans:
     detector:       unet
-    model_path:     models/unet_celegans_best_newchip.pth
+    model_path:     ../models/unet_celegans_best_newchip.pth
     channel_key:    channel_bf
     unet_threshold: 0.5
     min_obj_um2:    1000.0

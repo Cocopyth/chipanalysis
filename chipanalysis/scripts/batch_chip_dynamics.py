@@ -70,9 +70,37 @@ import yaml
 # ──────────────────────────────────────────────────────────────────────────────
 
 def load_config(yaml_path: str | Path) -> dict:
-    with open(yaml_path) as f:
+    """Load YAML config and resolve all model_path values relative to the config file."""
+    config_path = Path(yaml_path).resolve()
+    with open(config_path) as f:
         cfg = yaml.safe_load(f)
+    _resolve_model_paths(cfg, config_path)
     return cfg
+
+
+def _resolve_model_paths(cfg: dict, config_path: Path) -> None:
+    """Resolve all model_path values in-place, relative to the config file's directory."""
+    config_dir = config_path.parent.resolve()
+
+    def _resolve(p: str) -> str:
+        p = Path(p)
+        if p.is_absolute():
+            resolved = p
+        else:
+            resolved = (config_dir / p).resolve()
+        if not resolved.exists():
+            raise FileNotFoundError(
+                f"Model not found: {resolved}\n"
+                f"  (config dir: {config_dir}, original path: '{p}')"
+            )
+        return str(resolved)
+
+    if "model_path" in cfg.get("pillar", {}):
+        cfg["pillar"]["model_path"] = _resolve(cfg["pillar"]["model_path"])
+
+    for org_cfg in cfg.get("organisms", {}).values():
+        if "model_path" in org_cfg:
+            org_cfg["model_path"] = _resolve(org_cfg["model_path"])
 
 
 def _require(d: dict, *keys: str) -> object:
@@ -396,7 +424,7 @@ def main():
         print(len(df_manifest) - 1)   # upper bound for --array=0-N
         sys.exit(0)
 
-    cfg        = load_config(args.config)
+    cfg        = load_config(args.config)   # also resolves ../models/ paths
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
 
