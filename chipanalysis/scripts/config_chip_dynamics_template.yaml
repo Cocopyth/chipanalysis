@@ -7,53 +7,43 @@
 
 # ── Pillar detection (shared by all organisms) ────────────────────────────────
 pillar:
-  model_path:    /path/to/unet_pillar.pth   # ← REQUIRED: fill in
+  model_path:    ../models/unet_pillar_newchip.pth
   threshold:     0.5
   patch_size:    256
   patch_stride:  128
   min_obj_um2:   1000.0
-  crop_cols:     500   # columns trimmed on each side before row-projecting
+  crop_cols:     500
 
 # ── Common pipeline parameters ────────────────────────────────────────────────
-timepoint_ref: 0     # frame index used for rotation alignment & pillar detection
-n_frames_mean: 10    # number of frames averaged for the fluorescence temporal mean
+timepoint_ref: 0
+n_frames_mean: 10
 
 # ── Per-organism detector configuration ───────────────────────────────────────
-#
-# detector: "unet"            → make_unet_detector (ML model, uses BF channel)
-# detector: "fluo_threshold"  → make_fluo_detector with calibrated threshold
-#                               (fluorescence channel, threshold set from t=0)
-#
-# channel_key: name of the Excel column that holds the channel index to segment.
-#   "channel_bf"     → brightfield (for ML models)
-#   "channel_purple" → purple / mCherry channel (for fluorescence threshold)
-#   "channel_green"  → green channel
-#
 organisms:
 
   physarum:
     detector:       unet
-    model_path:     /path/to/unet_physarum.pth   # ← REQUIRED
-    channel_key:    channel_bf
-    unet_threshold: 0.5
-    min_obj_um2:    5000.0
-
-  celegans:
-    detector:       unet
-    model_path:     /path/to/unet_celegans.pth   # ← REQUIRED
+    model_path:     ../models/unet_ppolycephalum_best_newchip.pth
     channel_key:    channel_bf
     unet_threshold: 0.5
     min_obj_um2:    100.0
 
+  celegans:
+    detector:       unet
+    model_path:     ../models/unet_celegans_best_newchip.pth
+    channel_key:    channel_bf
+    unet_threshold: 0.5
+    min_obj_um2:    1000.0
+
   dictyostelium:
     detector:            fluo_threshold
     channel_key:         channel_purple
-    bg_sigma_um:         1000.0   # Gaussian σ for spatial background removal (µm)
-    thresh_factor:       0.2      # fraction of Otsu applied to calibrated frame
+    bg_sigma_um:         1000.0
+    thresh_factor:       0.2
     min_obj_um2:         25.0
     max_hole_um2:        5.0
-    calibrate_timepoint: 0        # timepoint used to set the fixed threshold
-
+    calibrate_timepoint: 0
+    
 # ── Video export ──────────────────────────────────────────────────────────────
 video:
   fps:           1         # frames per second
