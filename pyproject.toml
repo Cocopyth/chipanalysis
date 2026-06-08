@@ -20,7 +20,8 @@ dependencies = [
   "opencv-python",
   "scikit-image",
   "moviepy",
-  "scikit-learn"
+  "scikit-learn",
+  "openpyxl"
 ]
 
 [build-system]
