@@ -46,7 +46,7 @@ set -euo pipefail
 # ── Environment ──────────────────────────────────────────────────────────────
 # Adjust module and venv path for your cluster setup.
 module load Python/3.12.3-GCCcore-13.3.0 2>/dev/null || true
-module load FFmpeg/7.0.2-GCCcore-13.3.0e
+module load FFmpeg/7.0.2-GCCcore-13.3.0
 
 source /home/bisot/Documents/chipanalysis/.venv/bin/activate
 
