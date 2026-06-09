@@ -49,8 +49,7 @@ module load Python/3.12.3-GCCcore-13.3.0 2>/dev/null || true
 source /home/bisot/Documents/chipanalysis/.venv/bin/activate
 
 # ── Script location (resolved relative to this .sh file) ─────────────────────
-SCRIPT_DIR="$(dirname "$(realpath "$0")")"
-PYTHON_SCRIPT="${SCRIPT_DIR}/batch_chip_dynamics.py"
+PYTHON_SCRIPT="${SLURM_SUBMIT_DIR}/chipanalysis/scripts/batch_chip_dynamics.py"
 
 if [[ ! -f "${PYTHON_SCRIPT}" ]]; then
     echo "[ERROR] batch_chip_dynamics.py not found at ${PYTHON_SCRIPT}" >&2
