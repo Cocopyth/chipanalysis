@@ -270,6 +270,14 @@ def process_scene(row, scene: int, cfg: dict, output_dir: Path,
     )
     print(f"  Detector  : {detect_fn.__doc__}")
 
+    # ── Video config (needed here to record the scale factor in the CSV) ──────
+    vid_cfg            = cfg.get("video", {})
+    video_resize_width = vid_cfg.get("width", 4096)
+    # Scale factor applied to every video frame: video_px = image_px * video_scale
+    video_scale        = video_resize_width / img_bf_ref.shape[1]
+    print(f"  Video scale: {video_scale:.4f}  "
+          f"({img_bf_ref.shape[1]} px → {video_resize_width} px wide)")
+
     # ── CSV output ────────────────────────────────────────────────────────────
     if not csv_path.exists():
         print(f"  Detecting objects ({len(timepoints)} timepoints) …", flush=True)
@@ -296,6 +304,7 @@ def process_scene(row, scene: int, cfg: dict, output_dir: Path,
         df.insert(6, "band_width_um", band_info["band_width_um"])
         df.insert(7, "px_um",         px_um)
         df.insert(8, "rotation_deg",  align_result["rotate_angle_deg"])
+        df.insert(9, "video_scale",   video_scale)
 
         df.to_csv(csv_path, index=False)
         print(f"  ✓ CSV saved → {csv_path.name}  ({len(df)} objects detected)")
@@ -310,7 +319,7 @@ def process_scene(row, scene: int, cfg: dict, output_dir: Path,
         from chipanalysis.functions.video_renderer import (
             render_detection_video, _time_label,
         )
-        vid_cfg = cfg.get("video", {})
+        # vid_cfg and video_resize_width already computed above
 
         # Timestamps for real-time labels
         times_lookup, t0_dt = {}, None
@@ -336,7 +345,7 @@ def process_scene(row, scene: int, cfg: dict, output_dir: Path,
             px_um=px_um,
             output_path=video_path,
             fps=vid_cfg.get("fps", 1),
-            resize_width=vid_cfg.get("width", 4096),
+            resize_width=video_resize_width,
             dpi=vid_cfg.get("dpi", 150),
             overlay_color=tuple(vid_cfg.get("overlay_color", [1.0, 0.35, 0.0])),
             overlay_alpha=vid_cfg.get("overlay_alpha", 0.45),

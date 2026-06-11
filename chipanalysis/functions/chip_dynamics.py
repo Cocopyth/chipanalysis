@@ -249,14 +249,26 @@ def build_cell_dataframe(
     Returns
     -------
     df_cells : pd.DataFrame with columns:
-        timepoint, id, centroid_row, centroid_col,
-        dist_to_band_px, dist_to_band_um, area_px, area_um2
+        timepoint, id, centroid_row, centroid_col, centroid_row_um, centroid_col_um,
+        dist_to_band_px, dist_to_band_um, area_px, area_um2, time_hours
     """
-    from chipanalysis.utils.file_reader import get_frame
+    from chipanalysis.utils.file_reader import get_frame, get_timestamps_by_T
 
     band_centre_row = band_info["band_centre_row"]
     min_px = max(1, int(min_obj_um2 / px_um ** 2))
     records = []
+    
+    # Get timestamps for all timepoints to compute time in hours
+    timestamps = get_timestamps_by_T(czi, S=scene if scene is not None else 0, C=channel, Z=0)
+    time_dict = {t: dt for t, dt in timestamps if dt is not None}
+    
+    # Determine reference time (first timepoint or first available timestamp)
+    if timepoints and timepoints[0] in time_dict:
+        ref_time = time_dict[timepoints[0]]
+    elif time_dict:
+        ref_time = time_dict[min(time_dict.keys())]
+    else:
+        ref_time = None
 
     for t in timepoints:
         raw, _ = get_frame(czi, t, channel, scene=scene,
@@ -274,9 +286,19 @@ def build_cell_dataframe(
         binary   = remove_small_objects(binary, max_size=min_px)
         labeled  = sk_label(binary)
         regions  = sk_regionprops(labeled)
+        
+        # Calculate time in hours
+        time_hours = None
+        if ref_time is not None and t in time_dict:
+            from datetime import datetime
+            current_time = time_dict[t]
+            if isinstance(current_time, datetime) and isinstance(ref_time, datetime):
+                time_diff = (current_time - ref_time).total_seconds()
+                time_hours = time_diff / 3600.0
 
         if verbose:
-            print(f"  t={t:4d}  objects detected: {len(regions)}")
+            time_str = f", time={time_hours:.2f}h" if time_hours is not None else ""
+            print(f"  t={t:4d}  objects detected: {len(regions)}{time_str}")
 
         for reg in regions:
             cy, cx  = reg.centroid
@@ -286,10 +308,13 @@ def build_cell_dataframe(
                 "id":              reg.label,
                 "centroid_row":    cy,
                 "centroid_col":    cx,
+                "centroid_row_um": cy * px_um,
+                "centroid_col_um": cx * px_um,
                 "dist_to_band_px": dist_px,
                 "dist_to_band_um": dist_px * px_um,
                 "area_px":         reg.area,
                 "area_um2":        reg.area * px_um ** 2,
+                "time_hours":      time_hours,
             })
 
     return pd.DataFrame(records)
