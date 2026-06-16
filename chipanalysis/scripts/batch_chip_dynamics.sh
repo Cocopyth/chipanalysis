@@ -35,7 +35,7 @@
 #   sbatch --mem=64G --time=24:00:00 --array=... batch_chip_dynamics.sh ...
 #
 #SBATCH --job-name=chip_dynamics
-#SBATCH --mem=32000
+#SBATCH --mem=16000
 #SBATCH --cpus-per-task=4
 #SBATCH --time=12:00:00
 #SBATCH --output=logs/chip_dynamics_%A_%a.out
