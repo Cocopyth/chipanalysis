@@ -5,8 +5,24 @@
 # Copy this file, fill in your model paths, and pass it with --config.
 # =============================================================================
 
-# ── Pillar detection (shared by all organisms) ────────────────────────────────
+# ── Main-channel geometry (shared by all organisms) ───────────────────────────
+# Preferred: "fourier_channel" uses BF periodicity + cross-correlation delay
+# refinement and does not need the pillar U-Net.
+# Legacy fallback: set method: "ml" to use model_path + U-Net pillar masks.
 pillar:
+  method:        fourier_channel
+
+  fourier:
+    target_period_um:              405.0
+    expected_main_width_um:        450.0
+    n_refinement_iters:            2
+    orientation_period_tolerance_fraction: 1.0
+    analysis_background_kernel_um: 300.0
+    orientation_angle_method:      centroid
+    delay_band_width_um:           200.0
+    delay_margin_um:               80.0
+
+  # Legacy ML fallback settings (used only with method: "ml")
   model_path:    ../models/unet_pillar_newchip.pth
   threshold:     0.5
   patch_size:    256

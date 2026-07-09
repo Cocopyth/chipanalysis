@@ -91,7 +91,8 @@ def render_detection_frame(
     ----------
     img_bf_raw    : (H, W) array  – raw brightfield (any dtype / range)
     binary_mask   : (H, W) bool   – detected objects (same spatial shape)
-    band_info     : dict          – output of ``detect_channel_from_mask``
+    band_info     : dict          – main-channel geometry; usually
+                    ``align_result["band_info"]`` from Fourier/delay alignment
     time_label    : str           – annotation text in the top-left corner
     resize_width  : int           – output frame width in pixels
     dpi           : int
@@ -210,7 +211,8 @@ def render_detection_video(
     channel_bf      : int   – brightfield channel (video background)
     rotate_fn       : callable  img → rotated_img
     detect_fn       : callable  (image, px_um) → bool mask
-    band_info       : dict   output of ``detect_channel_from_mask``
+    band_info       : dict   main-channel geometry; usually
+                    ``align_result["band_info"]`` from Fourier/delay alignment
     px_um           : float
     output_path     : str or Path
     fps             : int    – frames per second in the output video

@@ -7,8 +7,8 @@ detection-overlay video export.
 
 Pipeline (for each CZI × scene in the manifest)
 ------------------------------------------------
-1. Rotation alignment (FFT-based, BF channel)
-2. Pillar detection (U-Net) + band geometry
+1. Rotation alignment + main-channel geometry (Fourier/delay refinement, BF channel)
+2. Optional legacy pillar detection (U-Net) + band geometry
 3. Temporal mean computation (for fluorescence threshold detector)
 4. Build object detector from organism config (see YAML)
 5. Run detection on ALL timepoints  →  save objects.csv
@@ -95,7 +95,8 @@ def _resolve_model_paths(cfg: dict, config_path: Path) -> None:
             )
         return str(resolved)
 
-    if "model_path" in cfg.get("pillar", {}):
+    pillar_cfg = cfg.get("pillar", {})
+    if pillar_cfg.get("method", "fourier_channel") in ("ml", "unet") and "model_path" in pillar_cfg:
         cfg["pillar"]["model_path"] = _resolve(cfg["pillar"]["model_path"])
 
     for org_cfg in cfg.get("organisms", {}).values():
@@ -146,7 +147,11 @@ def build_detector(org_cfg, czi, scene, detect_channel, rotate_fn, px_um,
         detect_fn = make_unet_detector(
             model_path=_require(org_cfg, "model_path"),
             threshold=org_cfg.get("unet_threshold", 0.5),
+            patch_size=org_cfg.get("patch_size", 256),
+            patch_stride=org_cfg.get("patch_stride", 128),
             min_obj_um2=org_cfg.get("min_obj_um2", 0.0),
+            normalization=org_cfg.get("normalization", "percentile"),
+            norm_percentiles=tuple(org_cfg.get("norm_percentiles", (0.0, 99.5))),
         )
         return detect_fn, None   # no temporal mean needed
 
@@ -193,8 +198,6 @@ def process_scene(row, scene: int, cfg: dict, output_dir: Path,
         load_czi, get_rotation_fn, get_rotated_frame,
         detect_channel_from_mask, build_cell_dataframe,
     )
-    from chipanalysis.functions.detectors import make_unet_pillar_detector
-
     czi_path = Path(row.czi_path)
     organism  = str(row.organism).strip().lower()
     stem      = f"{czi_path.stem}_scene{scene}"
@@ -237,30 +240,49 @@ def process_scene(row, scene: int, cfg: dict, output_dir: Path,
     timepoints = list(range(dim_sizes.get("T", 1)))
     print(f"  Timepoints: {len(timepoints)}  |  px: {px_um:.4f} µm")
 
-    # ── Rotation ──────────────────────────────────────────────────────────────
+    # ── Alignment and channel geometry ────────────────────────────────────────
     timepoint_ref = cfg.get("timepoint_ref", 0)
+    pillar_cfg = cfg.get("pillar", {})
+    pillar_method = pillar_cfg.get("method", "fourier_channel")
+    alignment_kwargs = {}
+    alignment_kwargs.update(cfg.get("alignment", {}))
+    alignment_kwargs.update(pillar_cfg.get("fourier", {}))
+
     rotate_fn, align_result = get_rotation_fn(
         czi, bf_channel=channel_bf, scene=scene,
-        timepoint=timepoint_ref, px_um=px_um, debug=False,
+        timepoint=timepoint_ref,
+        px_um=px_um,
+        debug=False,
+        alignment_method="fft_only" if pillar_method in ("ml", "unet") else "fourier_channel",
+        alignment_kwargs=alignment_kwargs,
     )
     print(f"  Rotation  : {align_result['rotate_angle_deg']:.2f}°")
 
-    # ── Pillar detection ──────────────────────────────────────────────────────
-    pillar_cfg = cfg.get("pillar", {})
     img_bf_ref, _ = get_rotated_frame(czi, timepoint_ref, channel_bf, scene, rotate_fn)
-    pillar_fn = make_unet_pillar_detector(
-        model_path=_require(pillar_cfg, "model_path"),
-        threshold=pillar_cfg.get("threshold",    0.5),
-        patch_size=pillar_cfg.get("patch_size",  256),
-        patch_stride=pillar_cfg.get("patch_stride", 128),
-        min_pillar_um2=pillar_cfg.get("min_obj_um2", 1000.0),
-    )
-    print("  Running pillar detector …", flush=True)
-    pillar_mask = pillar_fn(img_bf_ref, px_um)
-    crop_cols   = pillar_cfg.get("crop_cols", 500)
-    band_info   = detect_channel_from_mask(pillar_mask, px_um, crop_cols=crop_cols)
+
+    if pillar_method in ("ml", "unet"):
+        # Legacy option: detect pillar masks with the U-Net and infer the empty
+        # channel from that mask. Kept for compatibility, no longer preferred.
+        from chipanalysis.functions.detectors import make_unet_pillar_detector
+
+        pillar_fn = make_unet_pillar_detector(
+            model_path=_require(pillar_cfg, "model_path"),
+            threshold=pillar_cfg.get("threshold",    0.5),
+            patch_size=pillar_cfg.get("patch_size",  256),
+            patch_stride=pillar_cfg.get("patch_stride", 128),
+            min_pillar_um2=pillar_cfg.get("min_obj_um2", 1000.0),
+        )
+        print("  Running legacy pillar detector …", flush=True)
+        pillar_mask = pillar_fn(img_bf_ref, px_um)
+        crop_cols   = pillar_cfg.get("crop_cols", 500)
+        band_info   = detect_channel_from_mask(pillar_mask, px_um, crop_cols=crop_cols)
+        band_source = "pillar U-Net"
+    else:
+        band_info = align_result["band_info"]
+        band_source = "Fourier channel"
+
     print(f"  Band      : {band_info['band_width_um']:.1f} µm wide  "
-          f"(rows {band_info['band_top']}–{band_info['band_bottom']})")
+          f"(rows {band_info['band_top']}–{band_info['band_bottom']}, {band_source})")
 
     # ── Build object detector ─────────────────────────────────────────────────
     n_frames_mean = cfg.get("n_frames_mean", 10)

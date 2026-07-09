@@ -32,7 +32,7 @@ import pandas as pd
 from aicspylibczi import CziFile
 
 from chipanalysis.utils.file_reader import get_pixel_sizes_um, get_timestamps_by_T, get_frame
-from chipanalysis.chip_alignment import align_chip_to_image, get_roi_from_result, ChipGeometry
+from chipanalysis.chip_alignment import align_chip_to_image_fourier_channel, get_roi_from_result, ChipGeometry
 from chipanalysis.functions.region_fluorescence import (
     profile_mean,
     count_cells,
@@ -154,7 +154,12 @@ def main(args=None):
     # Align chip on the first frame (channel 2)
     print("Aligning chip to image...")
     first_frame, _ = get_frame(czi, 0, 2)
-    result = align_chip_to_image(first_frame, pixel_size_um=pixel_size_um["X"], debug=False, geom=ChipGeometry())
+    result = align_chip_to_image_fourier_channel(
+        first_frame,
+        pixel_size_um=pixel_size_um["X"],
+        debug=False,
+        geom=ChipGeometry(),
+    )
     print("  Alignment successful.")
     
     roi_selectors = make_roi_selectors(

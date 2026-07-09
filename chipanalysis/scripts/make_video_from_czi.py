@@ -48,7 +48,11 @@ from chipanalysis.utils.maye_video_axio import (
     mcherry, gfp, gray_cmap, gfp,
     norm, clamp, make_annotated,
 )
-from chipanalysis.chip_alignment import align_chip_to_image, get_roi_from_result, ChipGeometry
+from chipanalysis.chip_alignment import (
+    align_chip_to_image_fourier_channel,
+    get_roi_from_result,
+    ChipGeometry,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +128,12 @@ def main(args=None):
     img_align, _ = get_frame(czi, 0, opts.ch_gray)
     
     geom = ChipGeometry()  # Use default geometry; customize as needed
-    result = align_chip_to_image(img_align, pixel_size_um=pixel_size["X"], geom=geom, debug=False)
+    result = align_chip_to_image_fourier_channel(
+        img_align,
+        pixel_size_um=pixel_size["X"],
+        geom=geom,
+        debug=False,
+    )
     if not result["success"]:
         print("WARNING: chip alignment failed – ROI may be incorrect.")
         for msg in result["messages"]:

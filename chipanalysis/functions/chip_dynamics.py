@@ -11,19 +11,18 @@ Typical pipeline
 1.  czi, px_um, dim_sizes = load_czi(path)
 2.  rotate_fn, align_result = get_rotation_fn(czi, bf_channel=2, scene=3)
 3.  temporal_mean = compute_temporal_mean(czi, channel=1, scene=3, rotate_fn=rotate_fn)
-4.  pillar_mask  = pillar_detect_fn(img_bf_rotated, px_um)   # any callable
-5.  band_info    = detect_channel_from_mask(pillar_mask, px_um)
+4.  band_info    = align_result["band_info"]  # Fourier/delay channel geometry
 6.  df_cells     = build_cell_dataframe(
                        czi, scene=3, channel=1, timepoints=[0,10,20],
                        rotate_fn=rotate_fn,
                        detect_fn=my_detect_fn,
-                       band_info=band_info,
+                       band_info=align_result["band_info"],
                        px_um=px_um,
                    )
 
 Detection function contract
 ---------------------------
-Any ``detect_fn`` or ``pillar_detect_fn`` must have the signature::
+Any object ``detect_fn`` must have the signature::
 
     def detect_fn(image: np.ndarray, px_um: float) -> np.ndarray:
         '''image is a 2-D float array (already rotated).
@@ -75,7 +74,16 @@ def load_czi(czi_path):
 # Rotation / alignment
 # ──────────────────────────────────────────────────────────────────────────────
 
-def get_rotation_fn(czi, bf_channel, scene, timepoint=0, px_um=None, debug=False):
+def get_rotation_fn(
+    czi,
+    bf_channel,
+    scene,
+    timepoint=0,
+    px_um=None,
+    debug=False,
+    alignment_method="fourier_channel",
+    alignment_kwargs=None,
+):
     """
     Estimate chip rotation from a brightfield frame.
 
@@ -86,9 +94,14 @@ def get_rotation_fn(czi, bf_channel, scene, timepoint=0, px_um=None, debug=False
     scene       : int or None
     timepoint   : int   – frame used for alignment (default 0)
     px_um       : float or None – if None, re-reads from czi
-    debug       : bool  – if True, align_chip_to_image generates diagnostic
-                          figures (FFT orientation, rotated image, etc.);
-                          they are stored in align_result['figures']
+    debug       : bool  – if True, alignment generates diagnostic figures stored
+                          in align_result['figures']
+    alignment_method : {"fourier_channel", "fft_only"}
+        Preferred default is "fourier_channel", which detects the main channel
+        from Fourier periodicity and delay refinement. Use "fft_only" for the
+        older rotation-only behavior.
+    alignment_kwargs : dict or None
+        Extra keyword arguments forwarded to the selected alignment function.
 
     Returns
     -------
@@ -96,15 +109,40 @@ def get_rotation_fn(czi, bf_channel, scene, timepoint=0, px_um=None, debug=False
     align_result : dict      full output of align_chip_to_image
     """
     from chipanalysis.utils.file_reader import get_frame, get_pixel_sizes_um
-    from chipanalysis.chip_alignment import align_chip_to_image, ChipGeometry
+    from chipanalysis.chip_alignment import (
+        align_chip_to_image,
+        align_chip_to_image_fourier_channel,
+        ChipGeometry,
+    )
 
     if px_um is None:
         px_um = get_pixel_sizes_um(czi)["X"]
 
+    if alignment_kwargs is None:
+        alignment_kwargs = {}
+
     img_bf, _ = get_frame(czi, timepoint, bf_channel, scene=scene)
-    align_result = align_chip_to_image(
-        img_bf, pixel_size_um=px_um, debug=debug, geom=ChipGeometry()
-    )
+    if alignment_method in ("fourier_channel", "fourier", "fft_channel"):
+        align_result = align_chip_to_image_fourier_channel(
+            img_bf,
+            pixel_size_um=px_um,
+            debug=debug,
+            geom=ChipGeometry(),
+            **alignment_kwargs,
+        )
+    elif alignment_method in ("fft_only", "legacy_fft", "orientation_only"):
+        align_result = align_chip_to_image(
+            img_bf,
+            pixel_size_um=px_um,
+            debug=debug,
+            geom=ChipGeometry(),
+            **alignment_kwargs,
+        )
+    else:
+        raise ValueError(
+            "alignment_method must be 'fourier_channel' or 'fft_only'; "
+            f"got {alignment_method!r}"
+        )
     return align_result["rotate_fn"], align_result
 
 
@@ -240,7 +278,10 @@ def build_cell_dataframe(
     detect_fn      : callable (image, px_um) -> bool mask
                      Use ``make_fluo_detector`` or ``make_unet_detector`` from
                      ``chipanalysis.functions.detectors``.
-    band_info      : dict   – output of detect_channel_from_mask
+    band_info      : dict   – main-channel geometry. Usually
+                     align_result["band_info"] from Fourier/delay alignment;
+                     legacy mask-based output from detect_channel_from_mask is
+                     still accepted.
     px_um          : float
     min_obj_um2    : float  – objects smaller than this are discarded
     reference_shape: (H, W) or None – resize masks to this shape if given
@@ -283,7 +324,7 @@ def build_cell_dataframe(
                 order=0, preserve_range=True, anti_aliasing=False,
             ).astype(bool)
 
-        binary   = remove_small_objects(binary, max_size=min_px)
+        binary   = remove_small_objects(binary, min_size=min_px)
         labeled  = sk_label(binary)
         regions  = sk_regionprops(labeled)
         
@@ -303,6 +344,11 @@ def build_cell_dataframe(
         for reg in regions:
             cy, cx  = reg.centroid
             dist_px = cy - band_centre_row
+            perimeter_px = float(reg.perimeter)
+            circularity = (
+                4.0 * np.pi * reg.area / (perimeter_px ** 2)
+                if perimeter_px > 0.0 else np.nan
+            )
             records.append({
                 "timepoint":       t,
                 "id":              reg.label,
@@ -314,6 +360,9 @@ def build_cell_dataframe(
                 "dist_to_band_um": dist_px * px_um,
                 "area_px":         reg.area,
                 "area_um2":        reg.area * px_um ** 2,
+                "perimeter_px":    perimeter_px,
+                "perimeter_um":    perimeter_px * px_um,
+                "circularity":     circularity,
                 "time_hours":      time_hours,
             })
 

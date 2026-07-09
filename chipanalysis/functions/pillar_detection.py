@@ -41,7 +41,7 @@ def clean_pillar_mask(pred_binary, px_um, min_area_um2=100.0):
     clean : np.ndarray (H, W) bool
     """
     min_px = max(1, int(np.round(min_area_um2 / px_um ** 2)))
-    clean = remove_small_objects(pred_binary.copy(), max_size=min_px)
+    clean = remove_small_objects(pred_binary.copy(), min_size=min_px)
     clean = remove_small_holes(clean, max_size=min_px)
     return clean
 

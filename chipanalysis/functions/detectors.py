@@ -120,7 +120,7 @@ def make_fluo_detector(
 
         min_px = max(1, int(np.round(min_obj_um2  / px_um ** 2)))
         max_px = max(1, int(np.round(max_hole_um2 / px_um ** 2)))
-        binary = remove_small_objects(binary, max_size=min_px)
+        binary = remove_small_objects(binary, min_size=min_px)
         binary = remove_small_holes(binary, max_size=max_px)
         return binary
 
@@ -187,16 +187,38 @@ def _build_unet(features=(32, 64, 128, 256)):
     return _UNet()
 
 
+def _normalize_for_unet(image, mode="percentile", p_low=0.0, p_high=99.5):
+    """Return a float32 [0, 1] image using the requested contrast normalization."""
+    img = image.astype(np.float64)
+
+    if mode == "percentile":
+        lo, hi = np.percentile(img, (p_low, p_high))
+        img = np.clip(img, lo, hi)
+    elif mode == "minmax":
+        lo, hi = img.min(), img.max()
+    else:
+        raise ValueError("normalization must be 'percentile' or 'minmax'")
+
+    if hi - lo > 0:
+        img = (img - lo) / (hi - lo)
+    else:
+        img = np.zeros_like(img)
+    return img.astype(np.float32)
+
+
 def _unet_predict_raw(model, device, image, threshold,
-                      patch_size=256, patch_stride=128):
+                      patch_size=256, patch_stride=128,
+                      normalization="percentile",
+                      norm_percentiles=(0.0, 99.5)):
     """Run tiled inference and return a probability map (float32) and binary mask."""
     import torch
 
-    img = image.astype(np.float64)
-    lo, hi = img.min(), img.max()
-    if hi - lo > 0:
-        img = (img - lo) / (hi - lo)
-    img = img.astype(np.float32)
+    img = _normalize_for_unet(
+        image,
+        mode=normalization,
+        p_low=norm_percentiles[0],
+        p_high=norm_percentiles[1],
+    )
     H, W = img.shape
 
     def _pad(n):
@@ -232,6 +254,8 @@ def make_unet_detector(
     patch_stride=128,
     features=(32, 64, 128, 256),
     min_obj_um2=0.0,
+    normalization="percentile",
+    norm_percentiles=(0.0, 99.5),
     post_process_fn=None,
 ):
     """
@@ -248,6 +272,11 @@ def make_unet_detector(
     features        : tuple       – U-Net feature sizes (must match checkpoint)
     min_obj_um2     : float       – remove connected components whose area is
                                     smaller than this value (µm²).  0 = disabled.
+    normalization   : {"percentile", "minmax"}
+        Contrast normalization before tiled inference. ``"percentile"`` matches
+        the C. elegans training notebook's ``img_disp`` path by default.
+    norm_percentiles: tuple[float, float]
+        Low/high percentiles used when ``normalization="percentile"``.
     post_process_fn : callable or None
         Optional  (binary_mask, px_um) -> binary_mask  applied after thresholding
         and min-size filtering.
@@ -271,11 +300,13 @@ def make_unet_detector(
 
     def _detect(image: np.ndarray, px_um: float) -> np.ndarray:
         _, binary = _unet_predict_raw(
-            model, device, image, threshold, patch_size, patch_stride
+            model, device, image, threshold, patch_size, patch_stride,
+            normalization=normalization,
+            norm_percentiles=norm_percentiles,
         )
         if min_obj_um2 > 0.0:
             min_px = max(1, int(np.round(min_obj_um2 / px_um ** 2)))
-            binary = remove_small_objects(binary, max_size=min_px)
+            binary = remove_small_objects(binary, min_size=min_px)
         if post_process_fn is not None:
             binary = post_process_fn(binary, px_um)
         return binary
@@ -283,6 +314,7 @@ def make_unet_detector(
     _detect.__doc__ = (
         f"UNet detector  model={model_path}  threshold={threshold}"
         f"  min_obj={min_obj_um2} µm²"
+        f"  normalization={normalization}"
     )
     return _detect
 
