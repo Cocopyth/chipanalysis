@@ -58,6 +58,7 @@ Output naming
 {output_dir}/{czi_stem}_scene{s}_ch{c}_video.mp4
 
 Both outputs are skipped if they already exist (safe to re-run / resume).
+Rows whose CZI cannot be found under --czi-root are skipped with a warning.
 """
 
 from __future__ import annotations
@@ -145,6 +146,11 @@ def _row_value(row, key: str, default=None):
     return getattr(row, key, default)
 
 
+def _warn(message: str) -> None:
+    """Print warnings to stderr so --count-tasks remains shell-friendly."""
+    print(f"[WARN] {message}", file=sys.stderr)
+
+
 def _normalise_manifest_columns(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
@@ -201,8 +207,8 @@ def _czi_name_matches(czi_path: Path, experiment_name: str) -> bool:
 
 
 def resolve_czi_path(row, czi_root: str | Path | None,
-                     czi_files: list[Path] | None = None) -> Path:
-    """Resolve the CZI path for one manifest row."""
+                     czi_files: list[Path] | None = None) -> Path | None:
+    """Resolve the CZI path for one manifest row, or None if it is absent."""
     if czi_root is not None:
         experiment_name = _row_value(row, "name")
         if _is_missing(experiment_name):
@@ -215,11 +221,12 @@ def resolve_czi_path(row, czi_root: str | Path | None,
             if _czi_name_matches(p, str(experiment_name))
         ]
         if not matches:
-            raise FileNotFoundError(
-                f"No CZI under {czi_root} starts with manifest name "
-                f"{experiment_name!r}"
+            _warn(
+                f"Skipping {experiment_name!r}: no CZI under {czi_root} "
+                "starts with that name"
             )
-        if len(matches) > 1:
+            return None
+        elif len(matches) > 1:
             choices = "\n    ".join(str(p) for p in matches)
             raise ValueError(
                 f"Multiple CZI files under {czi_root} match manifest name "
@@ -229,22 +236,38 @@ def resolve_czi_path(row, czi_root: str | Path | None,
 
     czi_path = _row_value(row, "czi_path")
     if _is_missing(czi_path):
-        raise FileNotFoundError(
-            "Manifest row has no czi_path and --czi-root was not provided"
+        _warn(
+            f"Skipping {_row_value(row, 'name', '<unnamed>')!r}: no czi_path "
+            "and --czi-root was not provided"
         )
-    return Path(czi_path)
+        return None
+    czi_path = Path(czi_path)
+    if not czi_path.exists():
+        _warn(
+            f"Skipping {_row_value(row, 'name', '<unnamed>')!r}: "
+            f"CZI not found at {czi_path}"
+        )
+        return None
+    return czi_path
 
 
 def resolve_manifest_czi_paths(df: pd.DataFrame,
                                czi_root: str | Path | None) -> pd.DataFrame:
-    """Return a copy of the manifest with czi_path resolved for every row."""
+    """Return manifest rows whose CZI paths can be resolved."""
     df = df.copy()
     czi_files = _index_czi_files(czi_root) if czi_root is not None else None
-    df["czi_path"] = [
-        str(resolve_czi_path(row, czi_root, czi_files))
-        for _, row in df.iterrows()
-    ]
-    return df
+    rows = []
+    for _, row in df.iterrows():
+        czi_path = resolve_czi_path(row, czi_root, czi_files)
+        if czi_path is None:
+            continue
+        row = row.copy()
+        row["czi_path"] = str(czi_path)
+        rows.append(row)
+
+    if not rows:
+        return df.iloc[0:0].copy().reset_index(drop=True)
+    return pd.DataFrame(rows).reset_index(drop=True)
 
 
 def _parse_scene_list(value) -> set[int]:
@@ -685,6 +708,9 @@ def main():
     if args.count_tasks or args.list_tasks or args.task is not None:
         tasks = build_scene_tasks(df_manifest)
         if args.count_tasks:
+            if not tasks:
+                print("[ERROR] No runnable CZI scene tasks found.", file=sys.stderr)
+                sys.exit(1)
             print(len(tasks) - 1)
             sys.exit(0)
         if args.list_tasks:
