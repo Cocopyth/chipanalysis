@@ -13,6 +13,9 @@ pillar:
   method:        fourier_channel
 
   fourier:
+    # These are defaults. If the Excel manifest has a registered "chip" value
+    # such as PPA_Chip_May25_onelayer, that chip geometry overrides the period
+    # and expected main-channel width for that row.
     target_period_um:              405.0
     expected_main_width_um:        450.0
     n_refinement_iters:            2

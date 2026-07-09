@@ -3,23 +3,25 @@
 # batch_chip_dynamics.sh  –  SLURM job-array launcher for batch_chip_dynamics.py
 # =============================================================================
 #
-# Each array task processes ONE row from the Excel manifest so that SLURM can
-# run multiple CZI files in parallel.
+# Each array task processes ONE CZI scene from the Excel manifest so that SLURM
+# can balance multi-scene CZI files across jobs.
 #
 # Quick-start
 # -----------
-# Step 1 – find how many rows are in your manifest (sets the array upper bound):
+# Step 1 – find how many scene tasks are in your manifest (sets the array upper bound):
 #
 #   N=$(python /path/to/batch_chip_dynamics.py \
 #         --excel   /path/to/manifest.xlsx   \
+#         --czi-root /scratch/bisot/ZeisData \
 #         --config  /path/to/config.yaml     \
 #         --output  /tmp                     \
-#         --count-rows)
+#         --count-tasks)
 #
 # Step 2 – submit (limit concurrency with  %K, e.g. --array=0-${N}%4):
 #
 #   sbatch --array=0-${N} batch_chip_dynamics.sh \
 #       --excel  /path/to/manifest.xlsx       \
+#       --czi-root /scratch/bisot/ZeisData    \
 #       --config /path/to/config.yaml         \
 #       --output /path/to/results
 #
@@ -27,6 +29,7 @@
 #
 #   sbatch --array=0-${N} batch_chip_dynamics.sh \
 #       --excel  manifest.xlsx --config config.yaml \
+#       --czi-root /scratch/bisot/ZeisData \
 #       --output results --skip-video
 #
 # Default SLURM resource requests
@@ -65,7 +68,7 @@ mkdir -p logs
 echo "[$(date '+%Y-%m-%d %H:%M:%S')]  Array task ${SLURM_ARRAY_TASK_ID} starting on $(hostname)"
 
 python "${PYTHON_SCRIPT}" \
-    --row "${SLURM_ARRAY_TASK_ID}" \
+    --task "${SLURM_ARRAY_TASK_ID}" \
     "$@"
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')]  Array task ${SLURM_ARRAY_TASK_ID} done."

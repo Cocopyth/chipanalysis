@@ -18,19 +18,25 @@ from typing import Dict, Tuple, Optional
 from dataclasses import dataclass
 
 
-@dataclass
+@dataclass(frozen=True)
 class ChipGeometry:
     """
     Explicit chip geometry and channel parameters.
     
     All dimensions in µm unless otherwise noted.
     """
+    name: str = "generic"
+
     # Main channel geometry
     main_channel_width_um: float = 250.0
+    expected_main_width_um: float = 450.0 * 0.87
     side_sub_channel_width_um: float = 355.0
     
     # PPA substrate thickness (defines chip height)
     ppa_thickness_um: float = 1400.0
+
+    # Fourier/delay alignment parameters for the visible pillar periodicity.
+    target_period_um: float = 405.0
     
     # Periodicity detection parameters
     min_period_um: float = 40.0
@@ -43,6 +49,38 @@ class ChipGeometry:
     max_width_um: float = 50.0
     gap_um: float = 65.0
     total_length_um: float = 6000.0
+
+    def fourier_alignment_kwargs(self) -> Dict[str, float]:
+        """Return geometry parameters consumed by Fourier channel alignment."""
+        return {
+            "target_period_um": self.target_period_um,
+            "expected_main_width_um": self.expected_main_width_um,
+        }
+
+
+CHIP_GEOMETRIES: Dict[str, ChipGeometry] = {
+    "ppa_chip_may25_onelayer": ChipGeometry(
+        name="PPA_Chip_May25_onelayer",
+        main_channel_width_um=450.0 * 0.90,
+        expected_main_width_um=450.0 * 0.90,
+        target_period_um=405.0,
+    ),
+}
+
+
+def get_chip_geometry(chip_name: Optional[str]) -> Optional[ChipGeometry]:
+    """
+    Look up a named chip geometry from the registry.
+
+    The manifest uses human-readable names (for example
+    ``PPA_Chip_May25_onelayer``). Matching is case-insensitive.
+    """
+    if chip_name is None:
+        return None
+    key = str(chip_name).strip().lower()
+    if not key or key == "nan":
+        return None
+    return CHIP_GEOMETRIES.get(key)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1766,8 +1804,8 @@ def align_chip_to_image_fourier_channel(
     img: np.ndarray,
     pixel_size_um: float,
     geom: ChipGeometry = None,
-    target_period_um: float = 405.0,
-    expected_main_width_um: float = 450.0*0.87,
+    target_period_um: Optional[float] = None,
+    expected_main_width_um: Optional[float] = None,
     n_refinement_iters: int = 2,
     debug: bool = False,
     orientation_nbins: Optional[int] = None,
@@ -1925,6 +1963,10 @@ def align_chip_to_image_fourier_channel(
     """
     if geom is None:
         geom = ChipGeometry()
+    if target_period_um is None:
+        target_period_um = geom.target_period_um
+    if expected_main_width_um is None:
+        expected_main_width_um = geom.expected_main_width_um
     if orientation_expected_period_um is None:
         orientation_expected_period_um = target_period_um
 

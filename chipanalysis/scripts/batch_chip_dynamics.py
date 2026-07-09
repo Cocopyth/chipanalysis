@@ -18,31 +18,38 @@ Usage — local / debug (single row)
 -----------------------------------
 python batch_chip_dynamics.py \\
     --excel  /path/to/manifest.xlsx \\
+    --czi-root /scratch/bisot/ZeisData \\
     --config /path/to/config_chip_dynamics.yaml \\
     --output /path/to/results \\
     [--row 3]           # process only row 3 (0-indexed)
     [--skip-video]      # skip video export (faster data-only runs)
 
-Usage — SLURM job array (one job per Excel row)
+Usage — SLURM job array (one job per CZI scene)
 ------------------------------------------------
-# Step 1: find out how many rows you have
+# Step 1: find out how many scene tasks you have
 N=$(python batch_chip_dynamics.py \\
-        --excel manifest.xlsx --config config.yaml --output /tmp --count-rows)
+        --excel manifest.xlsx \\
+        --czi-root /scratch/bisot/ZeisData \\
+        --config config.yaml --output /tmp --count-tasks)
 
 # Step 2: submit
-sbatch --array=0-${N} batch_chip_dynamics.sh \\
+sbatch --array=0-${N}%4 batch_chip_dynamics.sh \\
     --excel /path/to/manifest.xlsx \\
+    --czi-root /scratch/bisot/ZeisData \\
     --config /path/to/config.yaml \\
     --output /path/to/results
 
 Expected Excel columns
 -----------------------
-czi_path        full path to the .czi file  (required)
+name            experiment/plate name used to find one matching CZI under --czi-root
+czi_path        legacy full path to the .czi file, used only without --czi-root
 scene           scene index; leave blank to process ALL scenes  (optional)
+exclude_scenes  scene indices to skip, e.g. 6 or 1,3,5 or 1-4  (optional)
 organism        physarum | celegans | dictyostelium  (required)
 channel_bf      integer index of the brightfield channel  (required)
 channel_purple  integer index of the purple/mCherry channel  (optional)
 channel_green   integer index of the green channel  (optional)
+chip            chip geometry name, e.g. PPA_Chip_May25_onelayer  (optional)
 notes           free text  (optional)
 
 Output naming
@@ -115,6 +122,189 @@ def _require(d: dict, *keys: str) -> object:
         d = d[k]
         path.append(k)
     return d
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Manifest helpers
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _is_missing(value) -> bool:
+    """Return True for pandas/Excel missing values without tripping on strings."""
+    if value is None:
+        return True
+    try:
+        return bool(pd.isna(value))
+    except (TypeError, ValueError):
+        return False
+
+
+def _row_value(row, key: str, default=None):
+    """Read a manifest value from a Series/tuple while avoiding pandas .name."""
+    if isinstance(row, pd.Series):
+        return row[key] if key in row.index else default
+    return getattr(row, key, default)
+
+
+def _normalise_manifest_columns(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
+    return df
+
+
+def load_manifest(excel_path: str | Path) -> pd.DataFrame:
+    """Load and clean the Excel manifest without resolving CZI paths yet."""
+    df = pd.read_excel(
+        excel_path,
+        dtype={
+            "channel_bf":     "Int64",
+            "channel_purple": "Int64",
+            "channel_green":  "Int64",
+            "scene":          "Int64",
+        },
+    )
+    df = _normalise_manifest_columns(df)
+
+    required = ["name", "organism", "channel_bf"]
+    missing = [col for col in required if col not in df.columns]
+    if missing:
+        raise KeyError(
+            "Required Excel column(s) missing: " + ", ".join(missing)
+        )
+
+    # Keep rows that have enough metadata to run. This drops note/header rows
+    # such as a plate name with no organism/channels yet.
+    df = df.dropna(subset=required).reset_index(drop=True)
+    return df
+
+
+def _index_czi_files(czi_root: str | Path) -> list[Path]:
+    root = Path(czi_root)
+    if not root.exists():
+        raise FileNotFoundError(f"--czi-root does not exist: {root}")
+    return sorted(p for p in root.rglob("*.czi") if p.is_file())
+
+
+def _czi_name_matches(czi_path: Path, experiment_name: str) -> bool:
+    """
+    Match CZI basenames that begin with the experiment name at a boundary.
+
+    This keeps ICP2 from accidentally matching ICP21 while still accepting
+    names such as ICP2-02.czi or ICP36_pillartrain-01.czi.
+    """
+    stem = czi_path.stem.lower()
+    name = str(experiment_name).strip().lower()
+    if not stem.startswith(name):
+        return False
+    if len(stem) == len(name):
+        return True
+    return stem[len(name)] in "-_ ."
+
+
+def resolve_czi_path(row, czi_root: str | Path | None,
+                     czi_files: list[Path] | None = None) -> Path:
+    """Resolve the CZI path for one manifest row."""
+    if czi_root is not None:
+        experiment_name = _row_value(row, "name")
+        if _is_missing(experiment_name):
+            raise ValueError("Cannot resolve CZI path: manifest row has no name")
+
+        if czi_files is None:
+            czi_files = _index_czi_files(czi_root)
+        matches = [
+            p for p in czi_files
+            if _czi_name_matches(p, str(experiment_name))
+        ]
+        if not matches:
+            raise FileNotFoundError(
+                f"No CZI under {czi_root} starts with manifest name "
+                f"{experiment_name!r}"
+            )
+        if len(matches) > 1:
+            choices = "\n    ".join(str(p) for p in matches)
+            raise ValueError(
+                f"Multiple CZI files under {czi_root} match manifest name "
+                f"{experiment_name!r}:\n    {choices}"
+            )
+        return matches[0]
+
+    czi_path = _row_value(row, "czi_path")
+    if _is_missing(czi_path):
+        raise FileNotFoundError(
+            "Manifest row has no czi_path and --czi-root was not provided"
+        )
+    return Path(czi_path)
+
+
+def resolve_manifest_czi_paths(df: pd.DataFrame,
+                               czi_root: str | Path | None) -> pd.DataFrame:
+    """Return a copy of the manifest with czi_path resolved for every row."""
+    df = df.copy()
+    czi_files = _index_czi_files(czi_root) if czi_root is not None else None
+    df["czi_path"] = [
+        str(resolve_czi_path(row, czi_root, czi_files))
+        for _, row in df.iterrows()
+    ]
+    return df
+
+
+def _parse_scene_list(value) -> set[int]:
+    """Parse scene lists like 6, '1,3,5', or '1-4' into 0-indexed ints."""
+    if _is_missing(value):
+        return set()
+    if isinstance(value, (int, np.integer)):
+        return {int(value)}
+    if isinstance(value, (float, np.floating)):
+        return {int(value)}
+
+    scenes = set()
+    text = str(value).replace(",", " ")
+    for token in text.split():
+        if "-" in token and not token.startswith("-"):
+            a, b = token.split("-", 1)
+            start, end = int(float(a)), int(float(b))
+            lo, hi = sorted((start, end))
+            scenes.update(range(lo, hi + 1))
+        else:
+            scenes.add(int(float(token)))
+    return scenes
+
+
+def scenes_for_row(row) -> list[int]:
+    """Return the scene indices requested by one manifest row."""
+    from aicspylibczi import CziFile
+
+    czi_path = Path(_row_value(row, "czi_path"))
+    if not czi_path.exists():
+        raise FileNotFoundError(f"CZI not found: {czi_path}")
+
+    raw_scene = _row_value(row, "scene")
+    if not _is_missing(raw_scene):
+        scenes = [int(raw_scene)]
+    else:
+        tmp = CziFile(czi_path)
+        tmp_dims = dict(zip(tmp.dims, tmp.size))
+        scenes = list(range(tmp_dims.get("S", 1)))
+
+    excluded = _parse_scene_list(_row_value(row, "exclude_scenes"))
+    return [scene for scene in scenes if scene not in excluded]
+
+
+def build_scene_tasks(df_manifest: pd.DataFrame) -> list[dict]:
+    """Build balanced SLURM tasks, one task per manifest row and scene."""
+    tasks = []
+    for row_index, row in df_manifest.iterrows():
+        czi_path = Path(_row_value(row, "czi_path"))
+        for scene in scenes_for_row(row):
+            tasks.append(
+                {
+                    "task_index": len(tasks),
+                    "row_index": row_index,
+                    "scene": scene,
+                    "name": _row_value(row, "name"),
+                    "czi_path": str(czi_path),
+                }
+            )
+    return tasks
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -198,14 +388,27 @@ def process_scene(row, scene: int, cfg: dict, output_dir: Path,
         load_czi, get_rotation_fn, get_rotated_frame,
         detect_channel_from_mask, build_cell_dataframe,
     )
-    czi_path = Path(row.czi_path)
-    organism  = str(row.organism).strip().lower()
+    from chipanalysis.chip_alignment import get_chip_geometry
+
+    czi_path = Path(_row_value(row, "czi_path"))
+    organism  = str(_row_value(row, "organism")).strip().lower()
+    chip_name = _row_value(row, "chip")
+    chip_geometry = None if _is_missing(chip_name) else get_chip_geometry(chip_name)
     stem      = f"{czi_path.stem}_scene{scene}"
 
     print(f"\n{'='*64}")
     print(f"  CZI      : {czi_path.name}")
     print(f"  Scene    : {scene}")
     print(f"  Organism : {organism}")
+    if not _is_missing(chip_name):
+        if chip_geometry is None:
+            print(f"  Chip     : {chip_name}  (no registered geometry; using config)")
+        else:
+            print(
+                f"  Chip     : {chip_geometry.name}  "
+                f"(main={chip_geometry.expected_main_width_um:.1f} µm, "
+                f"period={chip_geometry.target_period_um:.1f} µm)"
+            )
 
     # ── Organism config ───────────────────────────────────────────────────────
     org_cfg = cfg.get("organisms", {}).get(organism)
@@ -214,9 +417,9 @@ def process_scene(row, scene: int, cfg: dict, output_dir: Path,
         return
 
     # ── Resolve channels ──────────────────────────────────────────────────────
-    channel_bf  = int(row.channel_bf)
+    channel_bf  = int(_row_value(row, "channel_bf"))
     channel_key = _require(org_cfg, "channel_key")
-    raw_ch = getattr(row, channel_key, None)
+    raw_ch = _row_value(row, channel_key)
     if raw_ch is None or (isinstance(raw_ch, float) and np.isnan(raw_ch)) \
             or pd.isna(raw_ch):
         print(
@@ -247,6 +450,8 @@ def process_scene(row, scene: int, cfg: dict, output_dir: Path,
     alignment_kwargs = {}
     alignment_kwargs.update(cfg.get("alignment", {}))
     alignment_kwargs.update(pillar_cfg.get("fourier", {}))
+    if chip_geometry is not None:
+        alignment_kwargs.update(chip_geometry.fourier_alignment_kwargs())
 
     rotate_fn, align_result = get_rotation_fn(
         czi, bf_channel=channel_bf, scene=scene,
@@ -255,6 +460,7 @@ def process_scene(row, scene: int, cfg: dict, output_dir: Path,
         debug=False,
         alignment_method="fft_only" if pillar_method in ("ml", "unet") else "fourier_channel",
         alignment_kwargs=alignment_kwargs,
+        chip_geometry=chip_geometry,
     )
     print(f"  Rotation  : {align_result['rotate_angle_deg']:.2f}°")
 
@@ -321,12 +527,13 @@ def process_scene(row, scene: int, cfg: dict, output_dir: Path,
         df.insert(1, "scene",         scene)
         df.insert(2, "channel",       detect_channel)
         df.insert(3, "organism",      organism)
-        df.insert(4, "band_top_px",   band_info["band_top"])
-        df.insert(5, "band_bottom_px",band_info["band_bottom"])
-        df.insert(6, "band_width_um", band_info["band_width_um"])
-        df.insert(7, "px_um",         px_um)
-        df.insert(8, "rotation_deg",  align_result["rotate_angle_deg"])
-        df.insert(9, "video_scale",   video_scale)
+        df.insert(4, "chip",          None if _is_missing(chip_name) else str(chip_name))
+        df.insert(5, "band_top_px",   band_info["band_top"])
+        df.insert(6, "band_bottom_px",band_info["band_bottom"])
+        df.insert(7, "band_width_um", band_info["band_width_um"])
+        df.insert(8, "px_um",         px_um)
+        df.insert(9, "rotation_deg",  align_result["rotate_angle_deg"])
+        df.insert(10, "video_scale",  video_scale)
 
         df.to_csv(csv_path, index=False)
         print(f"  ✓ CSV saved → {csv_path.name}  ({len(df)} objects detected)")
@@ -385,21 +592,24 @@ def process_scene(row, scene: int, cfg: dict, output_dir: Path,
 # ──────────────────────────────────────────────────────────────────────────────
 
 def process_row(row, cfg: dict, output_dir: Path, skip_video: bool) -> None:
-    from aicspylibczi import CziFile
-
-    czi_path = Path(row.czi_path)
+    czi_path = Path(_row_value(row, "czi_path"))
     if not czi_path.exists():
         print(f"[ERROR] CZI not found: {czi_path}")
         return
 
-    # Scene column: specific index or NaN → all scenes
-    if hasattr(row, "scene") and not pd.isna(row.scene):
-        scenes = [int(row.scene)]
-    else:
-        tmp      = CziFile(czi_path)
-        tmp_dims = dict(zip(tmp.dims, tmp.size))
-        scenes   = list(range(tmp_dims.get("S", 1)))
-        print(f"  scene column empty → processing {len(scenes)} scene(s)")
+    try:
+        scenes = scenes_for_row(row)
+    except Exception as e:
+        print(f"[ERROR] Could not enumerate scenes for {czi_path.name}: {e}")
+        traceback.print_exc()
+        return
+
+    if _is_missing(_row_value(row, "scene")):
+        excluded = _parse_scene_list(_row_value(row, "exclude_scenes"))
+        msg = f"  scene column empty → processing {len(scenes)} scene(s)"
+        if excluded:
+            msg += f" after excluding {sorted(excluded)}"
+        print(msg)
 
     for scene in scenes:
         try:
@@ -421,55 +631,104 @@ def main():
     )
     parser.add_argument("--excel",       required=True,
                         help="Excel manifest (.xlsx)")
+    parser.add_argument("--czi-root",    default=None,
+                        help="Root directory containing CZI files. When set, "
+                             "the CZI is resolved from the manifest 'name' "
+                             "column instead of the czi_path column.")
     parser.add_argument("--config",      required=True,
                         help="YAML config file")
     parser.add_argument("--output",      required=True,
                         help="Output directory")
     parser.add_argument("--row",         type=int, default=None,
-                        help="Process only this 0-indexed row (for SLURM array)")
+                        help="Process only this 0-indexed manifest row "
+                             "(debug/local; processes that row's scenes)")
+    parser.add_argument("--task",        type=int, default=None,
+                        help="Process only this 0-indexed scene task "
+                             "(for SLURM arrays)")
     parser.add_argument("--skip-video",  action="store_true",
                         help="Skip video export")
     parser.add_argument("--count-rows",  action="store_true",
                         help="Print (number_of_rows - 1) and exit "
-                             "(used to set SLURM --array upper bound)")
+                             "(legacy row-array upper bound)")
+    parser.add_argument("--count-tasks", action="store_true",
+                        help="Print (number_of_scene_tasks - 1) and exit "
+                             "(recommended SLURM --array upper bound)")
+    parser.add_argument("--list-tasks",  action="store_true",
+                        help="Print the resolved scene-task table and exit")
     args = parser.parse_args()
 
+    if args.row is not None and args.task is not None:
+        parser.error("--row and --task are mutually exclusive")
+
     # ── Load manifest ─────────────────────────────────────────────────────────
-    df_manifest = pd.read_excel(
-        args.excel,
-        dtype={
-            "channel_bf":     "Int64",
-            "channel_purple": "Int64",
-            "channel_green":  "Int64",
-            "scene":          "Int64",
-        },
-    )
-    # Normalise column names: strip, lower, spaces → underscores
-    df_manifest.columns = [
-        c.strip().lower().replace(" ", "_") for c in df_manifest.columns
-    ]
-    # Drop fully-empty rows (common in Excel files)
-    df_manifest = df_manifest.dropna(subset=["czi_path"]).reset_index(drop=True)
+    df_manifest = load_manifest(args.excel)
 
     if args.count_rows:
         print(len(df_manifest) - 1)   # upper bound for --array=0-N
         sys.exit(0)
+
+    # Resolve CZI paths after row selection for debug runs. Task counting/listing
+    # needs every CZI because scene counts live in CZI metadata.
+    if args.row is not None:
+        if args.row >= len(df_manifest):
+            print(
+                f"[ERROR] --row {args.row} is out of range "
+                f"(manifest has {len(df_manifest)} runnable rows, "
+                f"valid indices: 0–{len(df_manifest)-1})."
+            )
+            sys.exit(1)
+        df_manifest = df_manifest.iloc[[args.row]].copy().reset_index(drop=True)
+        df_manifest = resolve_manifest_czi_paths(df_manifest, args.czi_root)
+    else:
+        df_manifest = resolve_manifest_czi_paths(df_manifest, args.czi_root)
+
+    if args.count_tasks or args.list_tasks or args.task is not None:
+        tasks = build_scene_tasks(df_manifest)
+        if args.count_tasks:
+            print(len(tasks) - 1)
+            sys.exit(0)
+        if args.list_tasks:
+            for task in tasks:
+                print(
+                    f"{task['task_index']}\trow={task['row_index']}\t"
+                    f"scene={task['scene']}\tname={task['name']}\t"
+                    f"{task['czi_path']}"
+                )
+            sys.exit(0)
+    else:
+        tasks = None
 
     cfg        = load_config(args.config)   # also resolves ../models/ paths
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # ── Select rows to process ────────────────────────────────────────────────
-    if args.row is not None:
-        if args.row >= len(df_manifest):
+    if args.task is not None:
+        if args.task >= len(tasks):
             print(
-                f"[ERROR] --row {args.row} is out of range "
-                f"(manifest has {len(df_manifest)} data rows, "
-                f"valid indices: 0–{len(df_manifest)-1})."
+                f"[ERROR] --task {args.task} is out of range "
+                f"(manifest has {len(tasks)} scene tasks, "
+                f"valid indices: 0–{len(tasks)-1})."
             )
             sys.exit(1)
-        rows = [df_manifest.iloc[args.row]]
-        print(f"Processing row {args.row} of {len(df_manifest)}  →  {output_dir}")
+        task = tasks[args.task]
+        row = df_manifest.iloc[task["row_index"]].copy()
+        row["czi_path"] = task["czi_path"]
+        print(
+            f"Processing task {args.task} of {len(tasks)} "
+            f"(row {task['row_index']}, scene {task['scene']})  →  {output_dir}"
+        )
+        try:
+            process_scene(row, int(task["scene"]), cfg, output_dir, args.skip_video)
+        except Exception as e:
+            print(f"[ERROR] task={args.task}: {e}")
+            traceback.print_exc()
+            sys.exit(1)
+        print("\nDone.")
+        return
+    elif args.row is not None:
+        rows = [df_manifest.iloc[0]]
+        print(f"Processing selected row {args.row}  →  {output_dir}")
     else:
         rows = [df_manifest.iloc[i] for i in range(len(df_manifest))]
         print(f"Processing {len(rows)} row(s)  →  {output_dir}")

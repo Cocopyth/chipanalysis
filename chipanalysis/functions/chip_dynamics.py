@@ -83,6 +83,7 @@ def get_rotation_fn(
     debug=False,
     alignment_method="fourier_channel",
     alignment_kwargs=None,
+    chip_geometry=None,
 ):
     """
     Estimate chip rotation from a brightfield frame.
@@ -102,6 +103,9 @@ def get_rotation_fn(
         older rotation-only behavior.
     alignment_kwargs : dict or None
         Extra keyword arguments forwarded to the selected alignment function.
+    chip_geometry : ChipGeometry or None
+        Geometry selected from the manifest chip column. If omitted, the
+        generic geometry is used.
 
     Returns
     -------
@@ -120,6 +124,8 @@ def get_rotation_fn(
 
     if alignment_kwargs is None:
         alignment_kwargs = {}
+    if chip_geometry is None:
+        chip_geometry = ChipGeometry()
 
     img_bf, _ = get_frame(czi, timepoint, bf_channel, scene=scene)
     if alignment_method in ("fourier_channel", "fourier", "fft_channel"):
@@ -127,7 +133,7 @@ def get_rotation_fn(
             img_bf,
             pixel_size_um=px_um,
             debug=debug,
-            geom=ChipGeometry(),
+            geom=chip_geometry,
             **alignment_kwargs,
         )
     elif alignment_method in ("fft_only", "legacy_fft", "orientation_only"):
@@ -135,7 +141,7 @@ def get_rotation_fn(
             img_bf,
             pixel_size_um=px_um,
             debug=debug,
-            geom=ChipGeometry(),
+            geom=chip_geometry,
             **alignment_kwargs,
         )
     else:
