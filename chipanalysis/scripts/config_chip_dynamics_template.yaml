@@ -46,6 +46,8 @@ organisms:
     channel_key:    channel_bf
     unet_threshold: 0.5
     min_obj_um2:    100.0
+    normalization:  percentile
+    norm_percentiles: [0.0, 99.5]
 
   celegans:
     detector:       unet
@@ -53,6 +55,8 @@ organisms:
     channel_key:    channel_bf
     unet_threshold: 0.5
     min_obj_um2:    1000.0
+    normalization:  percentile
+    norm_percentiles: [0.0, 99.5]
 
   dictyostelium:
     detector:            fluo_threshold
